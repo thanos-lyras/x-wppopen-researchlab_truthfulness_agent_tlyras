@@ -3709,6 +3709,8 @@ dependencies = [
     { name = "a2a-sdk", extra = ["http-server"] },
     { name = "google-adk", extra = ["gcp"] },
     { name = "mcp" },
+    { name = "pandas" },
+    { name = "scikit-learn" },
 ]
 
 [package.optional-dependencies]
@@ -3716,8 +3718,6 @@ notebook = [
     { name = "jupyterlab" },
     { name = "matplotlib" },
     { name = "missingno" },
-    { name = "pandas" },
-    { name = "scikit-learn" },
     { name = "seaborn" },
     { name = "shap" },
 ]
@@ -3730,8 +3730,8 @@ requires-dist = [
     { name = "matplotlib", marker = "extra == 'notebook'", specifier = ">=3.8" },
     { name = "mcp", specifier = ">=1.2.0" },
     { name = "missingno", marker = "extra == 'notebook'", specifier = ">=0.5" },
-    { name = "pandas", marker = "extra == 'notebook'", specifier = ">=2.2" },
-    { name = "scikit-learn", marker = "extra == 'notebook'", specifier = ">=1.4" },
+    { name = "pandas", specifier = ">=2.2" },
+    { name = "scikit-learn", specifier = ">=1.4" },
     { name = "seaborn", marker = "extra == 'notebook'", specifier = ">=0.13" },
     { name = "shap", marker = "extra == 'notebook'", specifier = ">=0.46" },
 ]
