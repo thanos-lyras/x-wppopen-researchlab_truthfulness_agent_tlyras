@@ -1,0 +1,36 @@
+{
+  "points": [
+    {
+      "statement": "In the past three years, we have prosecuted or brought more cases on access to public records than in the previous 12 years combined.",
+      "subjects": "candidates-biography$government-efficiency$government-regulation$history$job-accomplishments$legal-issues$transparency",
+      "speaker_name": "peter-kilmartin",
+      "speaker_job": "state representative",
+      "speaker_state": "Rhode Island",
+      "speaker_affiliation": "democrat",
+      "statement_context": "an interview on Rhode Island Public Radio"
+    },
+    {
+      "statement": "Wisconsin law says all recall petition signers must sign in the presence of another person.",
+      "subjects": "elections",
+      "speaker_name": "kurt-schuller",
+      "speaker_job": "State treasurer",
+      "speaker_state": "Wisconsin",
+      "speaker_affiliation": "republican",
+      "statement_context": "a tweet"
+    },
+    {
+      "statement": "Mitch McConnell voted with Harry Reid to infringe on our gun rights.",
+      "subjects": "congress$guns",
+      "speaker_name": "matt-bevin",
+      "speaker_job": "Investment manager",
+      "speaker_state": "Kentucky",
+      "speaker_affiliation": "republican",
+      "statement_context": "a television ad"
+    }
+  ],
+  "labels": [
+    "true",
+    "false",
+    "extremely-false"
+  ]
+}

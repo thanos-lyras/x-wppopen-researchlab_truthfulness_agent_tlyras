@@ -1,0 +1,106 @@
+{
+  "points": [
+    {
+      "statement": "In the past three years, we have prosecuted or brought more cases on access to public records than in the previous 12 years combined.",
+      "subjects": "candidates-biography$government-efficiency$government-regulation$history$job-accomplishments$legal-issues$transparency",
+      "speaker_name": "peter-kilmartin",
+      "speaker_job": "state representative",
+      "speaker_state": "Rhode Island",
+      "speaker_affiliation": "democrat",
+      "statement_context": "an interview on Rhode Island Public Radio"
+    },
+    {
+      "statement": "Tells President Barack Obama that he also asked former President George W. Bush about how he felt about Americans hating him.",
+      "subjects": "bush-administration$pundits",
+      "speaker_name": "bill-oreilly",
+      "speaker_job": "Fox News Channel host",
+      "speaker_state": "",
+      "speaker_affiliation": "none",
+      "statement_context": "an interview with President Barack Obama"
+    },
+    {
+      "statement": "In first week as governor, Tim Kaine proposed a nearly $4 billion tax increase, $4 billion, including a tax increase on people earning as little as $17,000 a year.",
+      "subjects": "taxes",
+      "speaker_name": "donald-trump",
+      "speaker_job": "President-Elect",
+      "speaker_state": "New York",
+      "speaker_affiliation": "republican",
+      "statement_context": "a speech."
+    },
+    {
+      "statement": "After one year, Tennessees students made their biggest single-year jump in achievement ever recorded in the state.",
+      "subjects": "education",
+      "speaker_name": "arne-duncan",
+      "speaker_job": "U.S. Secretary of Education",
+      "speaker_state": "Illinois",
+      "speaker_affiliation": "democrat",
+      "statement_context": "column in the Huffington Post"
+    },
+    {
+      "statement": "Whether in Illinois or Washington, Barack Obama has bridged partisanship to bring about significant reform.",
+      "subjects": "candidates-biography",
+      "speaker_name": "nancy-pelosi",
+      "speaker_job": "House Minority Leader",
+      "speaker_state": "California",
+      "speaker_affiliation": "democrat",
+      "statement_context": "Denver"
+    },
+    {
+      "statement": "Abortion coverage is a standard insurance benefit in nearly 90 percent of private plans sold in the U.S.",
+      "subjects": "abortion$health-care",
+      "speaker_name": "naral-pro-choice-america",
+      "speaker_job": "",
+      "speaker_state": "",
+      "speaker_affiliation": "organization",
+      "statement_context": "a statement."
+    },
+    {
+      "statement": "The most popular name is no longer John or Steven. Its Jose, Camilo and Maria.",
+      "subjects": "diversity$families$immigration",
+      "speaker_name": "jorge-ramos",
+      "speaker_job": "News anchor for Univision",
+      "speaker_state": "Florida",
+      "speaker_affiliation": "journalist",
+      "statement_context": "a broadcast of the Daily Show"
+    },
+    {
+      "statement": "Wisconsin law says all recall petition signers must sign in the presence of another person.",
+      "subjects": "elections",
+      "speaker_name": "kurt-schuller",
+      "speaker_job": "State treasurer",
+      "speaker_state": "Wisconsin",
+      "speaker_affiliation": "republican",
+      "statement_context": "a tweet"
+    },
+    {
+      "statement": "Were the worst state in the country at moving people from welfare to work.",
+      "subjects": "welfare",
+      "speaker_name": "catherine-hanaway",
+      "speaker_job": "Candidate for governor of Missouri",
+      "speaker_state": "Missouri",
+      "speaker_affiliation": "republican",
+      "statement_context": "a Republican gubernatorial debate"
+    },
+    {
+      "statement": "Mitch McConnell voted with Harry Reid to infringe on our gun rights.",
+      "subjects": "congress$guns",
+      "speaker_name": "matt-bevin",
+      "speaker_job": "Investment manager",
+      "speaker_state": "Kentucky",
+      "speaker_affiliation": "republican",
+      "statement_context": "a television ad"
+    }
+  ],
+  "labels": [
+    "true",
+    "true",
+    "mostly-true",
+    "mostly-true",
+    "half-true",
+    "barely-true",
+    "barely-true",
+    "false",
+    "false",
+    "extremely-false"
+  ]
+}

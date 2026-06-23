@@ -1,0 +1,22 @@
+[project]
+name = "truthfulness-agent"
+version = "0.1.0"
+description = "Multi-agent truthfulness classifier built on Google ADK 2.0."
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "google-adk[gcp]>=2.0.0,<3.0.0",
+    "a2a-sdk[http-server]>=0.3.0,<1.0.0",
+    "mcp>=1.2.0",
+]
+
+[project.optional-dependencies]
+notebook = [
+    "pandas>=2.2",
+    "matplotlib>=3.8",
+    "seaborn>=0.13",
+    "missingno>=0.5",
+    "scikit-learn>=1.4",
+    "jupyterlab>=4.0",
+    "shap>=0.46",
+]

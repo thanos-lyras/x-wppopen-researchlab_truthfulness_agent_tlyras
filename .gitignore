@@ -1,0 +1,20 @@
+__pycache__/
+*.pyc
+.venv/
+.env
+*.egg-info/
+dist/
+build/
+
+# ADK runtime artifacts
+.adk/
+
+# Local AI assistant context
+CLAUDE.md
+
+# Data and artifacts
+data/*.csv
+data/*.jsonl
+*.ckpt
+*.pt
+*.bin
