@@ -8,7 +8,7 @@ Four agents are wired up so far:
 
 - **Orchestrator** (`agents/agent.py`) — root agent; entry point. Lives directly in `agents/` because it's always the entry. Delegates to the zero-shot predictor **over A2A** (no in-process import).
 - **Zero-shot Predictor** (`agents/zero_shot/`) — wraps a pure-LLM `predict_truthfulness(points)` tool (temperature=0). Each non-orchestrator agent gets its own subfolder.
-- **Fine-tuned Predictor** (`agents/fine_tuned/`) — same architecture as zero-shot. Wired to the `predict_fine_tuned_truthfulness` MCP tool, which routes inference through the Vertex AI tuned model named in `FINE_TUNED_MODEL` (`.env`).
+- **Fine-tuned Predictor** (`agents/fine_tuned/`) — same architecture as zero-shot. Wired to the `predict_fine_tuned_truthfulness` MCP tool, which routes inference through the Vertex AI tuned model named in `FINE_TUNED_MODEL` (`.env`). When `FINE_TUNED_MODEL` is unset, the tool falls back to `FINE_TUNED_BASE_MODEL` (and logs a warning) so the wiring stays smoke-testable before the first SFT job finishes — use `make test-fine-tuned` against a running MCP server to verify. Fine-tuning jobs are submitted via the `fine_tune_truthfulness` MCP tool (or `make finetune`); the job name is auto-persisted to `LAST_TUNING_JOB` in `.env`, so the `check_finetune_status` MCP tool can later poll it and self-heal `FINE_TUNED_MODEL` when training completes. `check_finetune_status` updates both `.env` (for next boot) and the running process's environment, so the very next `predict_fine_tuned_truthfulness` call hits the new endpoint — no MCP server restart needed.
 - **Explainer** (`agents/explainer/`) — same architecture as the predictors. Wired to a future `explain_truthfulness` MCP tool (not yet implemented).
 
 Because the orchestrator now talks to zero_shot over A2A, **the zero_shot A2A server must be running** when you exercise the orchestrator. Use `make dev` (runs both in parallel) as your default dev command.
@@ -48,9 +48,10 @@ truthfulness-agent/
 │   │   ├── gcs_service.py         # GCSService (get-or-create bucket + upload a file)
 │   │   └── tuning_service.py      # TuningService (Vertex SFT submit + wait)
 │   └── tools/
-│       ├── predict.py             # predict_truthfulness (Component 1 — zero-shot)
-│       ├── predict_fine_tuned.py  # predict_fine_tuned_truthfulness (Component 2, endpoint 2 — uses FINE_TUNED_MODEL)
-│       └── finetune.py            # fine_tune_truthfulness (Component 2, endpoint 1)
+│       ├── predict.py                  # predict_truthfulness (Component 1 — zero-shot)
+│       ├── predict_fine_tuned.py       # predict_fine_tuned_truthfulness (Component 2, endpoint 2 — uses FINE_TUNED_MODEL)
+│       ├── finetune.py                 # fine_tune_truthfulness (Component 2, endpoint 1)
+│       └── check_finetune_status.py    # check_finetune_status (poll the last SFT job, auto-update FINE_TUNED_MODEL)
 ├── notebooks/                     # EDA + analysis (install via `make notebook`)
 │   └── 01_exploratory_data_analysis.ipynb
 └── scripts/
@@ -84,9 +85,10 @@ Place the dataset at `data/data.csv` (gitignored).
 | `make run-mcp`                       | Shared MCP tool server on `:8004` (`/mcp` endpoint, Streamable HTTP)      |
 | `make dev`                           | `run-mcp` + `run-a2a NAME=zero_shot` + `run-web` in parallel              |
 | `make clean`                         | Wipe `.venv` and `__pycache__`                                            |
-| `make notebook`                      | Install `notebook` extra (pandas/seaborn/jupyterlab) and open JupyterLab in `notebooks/` |
+| `make notebook`                      | Install `notebook` extra (jupyterlab/seaborn/matplotlib/missingno/shap) and open JupyterLab in `notebooks/` |
 | `make split`                         | Write `data/splits/{train,val,test}.jsonl` from `data.csv` (no GCS / no SFT) |
 | `make finetune`                      | Full pipeline: split → upload to GCS → submit Vertex SFT → wait for completion (requires `GCS_BUCKET` in `.env`) |
+| `make test-fine-tuned`               | Smoke-test the `predict_fine_tuned_truthfulness` MCP tool (requires `make run-mcp`); falls back to `FINE_TUNED_BASE_MODEL` when `FINE_TUNED_MODEL` is unset |
 
 ### Port allocation
 

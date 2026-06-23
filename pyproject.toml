@@ -8,15 +8,17 @@ dependencies = [
     "google-adk[gcp]>=2.0.0,<3.0.0",
     "a2a-sdk[http-server]>=0.3.0,<1.0.0",
     "mcp>=1.2.0",
+    # pandas + scikit-learn are imported at MCP startup via DatasetService,
+    # so they must live in base deps — not the notebook extra.
+    "pandas>=2.2",
+    "scikit-learn>=1.4",
 ]
 
 [project.optional-dependencies]
 notebook = [
-    "pandas>=2.2",
     "matplotlib>=3.8",
     "seaborn>=0.13",
     "missingno>=0.5",
-    "scikit-learn>=1.4",
     "jupyterlab>=4.0",
     "shap>=0.46",
 ]

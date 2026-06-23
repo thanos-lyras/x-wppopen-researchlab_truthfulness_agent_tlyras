@@ -30,9 +30,14 @@ N_EPOCHS      = int(os.environ.get("FINE_TUNED_EPOCHS", "5"))
 ADAPTER_SIZE  = os.environ.get("FINE_TUNED_ADAPTER_SIZE", "ADAPTER_SIZE_SIXTEEN")
 LRM           = float(os.environ.get("FINE_TUNED_LRM", "1.0"))
 
-# Tuned model resource name (filled in by the user AFTER an SFT job finishes).
-# Looks like "projects/.../locations/us-central1/models/<id>".
-FINE_TUNED_MODEL = os.environ.get("FINE_TUNED_MODEL")
+# FINE_TUNED_MODEL is NOT read at import time — predict_fine_tuned and
+# check_finetune_status read os.environ.get("FINE_TUNED_MODEL") at call time so
+# updates from check_finetune_status take effect without an MCP server restart.
+# Docs / example file: see .env.example.
+
+# Last tuning job submitted — written automatically by TuningService.submit()
+# so `check_finetune_status` can poll it later without the user re-typing the name.
+LAST_TUNING_JOB = os.environ.get("LAST_TUNING_JOB")
 
 # GCP / Vertex
 PROJECT_ID      = os.environ.get("GOOGLE_CLOUD_PROJECT")

@@ -73,6 +73,12 @@ run-mcp:
 	echo "▶ MCP tool server on port $$MCP_SERVER_PORT (endpoint /mcp)"; \
 	PYTHONPATH=. $(UV) run --env-file $(ENV_FILE) uvicorn mcp_server.server:app --host 0.0.0.0 --port $$MCP_SERVER_PORT --reload
 
+# Smoke-test the predict_fine_tuned_truthfulness MCP tool end-to-end.
+# Requires `make run-mcp` running in another terminal.
+# When FINE_TUNED_MODEL is unset, the tool falls back to FINE_TUNED_BASE_MODEL.
+test-fine-tuned:
+	PYTHONPATH=. $(UV) run --env-file $(ENV_FILE) python -m scripts.test_predict_fine_tuned
+
 # Parallel dev stack: MCP (:8004) + zero_shot A2A (:8001) + browser playground (:8080).
 # Start the orchestrator's A2A endpoint (:8000) separately: `make run-a2a NAME=orchestrator`.
 dev:
