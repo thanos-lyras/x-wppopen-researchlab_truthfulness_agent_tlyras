@@ -20,9 +20,13 @@ from .tools import tools
 explainer_agent = Agent(
     name="explainer",
     description=(
-        "Explainer agent. Produces natural-language justifications for "
-        "True/False verdicts on political statements. Processes batches in "
-        "a single tool call."
+        "Explainer agent. Classifies political statements as True or False "
+        "AND produces a short natural-language explanation for each verdict, "
+        "in a single tool call. The underlying predictor (zero-shot by "
+        "default, fine-tuned on request) drives the verdict; an independent "
+        "free-form model articulates why. If the caller supplies ground-truth "
+        "labels alongside the statements, also returns headline classification "
+        "metrics (accuracy, precision, recall, f1, confusion matrix)."
     ),
     instruction=EXPLAINER_INSTRUCTION,
     model=os.environ.get("EXPLAINER_AGENT_MODEL", "gemini-2.5-flash"),

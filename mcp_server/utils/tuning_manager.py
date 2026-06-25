@@ -3,20 +3,15 @@
 import time
 
 from dotenv import set_key
-from google import genai
 from google.genai import types
+
+from services.vertex_client import client
 
 from . import config
 
 
-class TuningService:
+class TuningManager:
     """Submit a Vertex AI Gemini SFT job, poll until terminal, write the deployed endpoint to .env."""
-
-    def __init__(self):
-        """Build a Vertex-mode genai client pinned to the regional TUNING_LOCATION ('global' rejects SFT)."""
-        self.client = genai.Client(
-            vertexai=True, project=config.PROJECT_ID, location=config.TUNING_LOCATION
-        )
 
     def submit(self, train_uri: str, val_uri: str):
         """Kick off the SFT job with hyperparams from config.py. Returns immediately; training runs server-side."""
@@ -26,7 +21,7 @@ class TuningService:
             f"_ep{config.N_EPOCHS}_lr{config.LRM}_{config.ADAPTER_SIZE.lower()}_v1stmt"
         )
         print(f"submitting tuning job: {display_name}")
-        job = self.client.tunings.tune(
+        job = client.tunings.tune(
             base_model=config.BASE_MODEL,
             training_dataset={"gcs_uri": train_uri},
             config=types.CreateTuningJobConfig(
@@ -49,7 +44,7 @@ class TuningService:
         # that str() emits, which would never match a bare-name allowlist.
         terminal = {"JOB_STATE_SUCCEEDED", "JOB_STATE_FAILED", "JOB_STATE_CANCELLED"}
         while True:
-            job = self.client.tunings.get(name=job.name)
+            job = client.tunings.get(name=job.name)
             print(f"[{time.strftime('%H:%M:%S')}] state = {job.state}")
             if job.state.name in terminal:
                 break

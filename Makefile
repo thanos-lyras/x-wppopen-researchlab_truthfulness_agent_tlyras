@@ -79,10 +79,23 @@ run-mcp:
 test-fine-tuned:
 	PYTHONPATH=. $(UV) run --env-file $(ENV_FILE) python -m scripts.test_predict_fine_tuned
 
-# Parallel dev stack: MCP (:8004) + zero_shot A2A (:8001) + browser playground (:8080).
-# Start the orchestrator's A2A endpoint (:8000) separately: `make run-a2a NAME=orchestrator`.
+# Per-agent shorthand wrappers so `make dev` can spin up all three A2A backends in parallel
+# (Make can't invoke the same target twice with different args inside one -j run).
+run-a2a-zero-shot:
+	$(MAKE) run-a2a NAME=zero_shot
+run-a2a-fine-tuned:
+	$(MAKE) run-a2a NAME=fine_tuned
+run-a2a-explainer:
+	$(MAKE) run-a2a NAME=explainer
+
+# Parallel dev stack: MCP (:8004) + zero_shot A2A (:8001) + fine_tuned A2A (:8002) +
+# explainer A2A (:8003) + browser playground (:8080).
+# The web UI on :8080 lets you chat with the orchestrator, which delegates to all three
+# sub-agents over A2A — so all three backends must be up. Start the orchestrator's own
+# A2A endpoint (:8000) separately when you need production-shape curl access:
+#     make run-a2a NAME=orchestrator
 dev:
-	$(MAKE) -j 3 run-mcp run-a2a run-web
+	$(MAKE) -j 5 run-mcp run-a2a-zero-shot run-a2a-fine-tuned run-a2a-explainer run-web
 
 # Cleanup the venv and Python caches
 clean:

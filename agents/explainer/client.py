@@ -23,9 +23,13 @@ _HOST = os.environ.get("EXPLAINER_A2A_HOST", "localhost")
 explainer_remote_agent = RemoteA2aAgent(
     name="explainer",
     description=(
-        "Produces natural-language explanations for True/False verdicts on "
-        "political statements. Send a batch of statement dicts; receive a "
-        "list of explanations in the same order."
+        "Classifies political statements as True or False AND produces a short "
+        "natural-language explanation for each verdict, in a single tool call. "
+        "The underlying predictor (zero-shot by default, fine-tuned on request) "
+        "drives the verdict; an independent free-form model articulates why. "
+        "If ground-truth labels are supplied alongside the statements, also "
+        "returns headline classification metrics (accuracy, precision, recall, "
+        "f1, confusion matrix)."
     ),
     agent_card=f"http://{_HOST}:{_PORT}{AGENT_CARD_WELL_KNOWN_PATH}",
     use_legacy=False,

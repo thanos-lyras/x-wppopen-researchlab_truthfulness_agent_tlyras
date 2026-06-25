@@ -21,7 +21,10 @@ zero_shot_agent = Agent(
     description=(
         "Zero-shot LLM predictor. Classifies political statements as True or "
         "False using only the LLM's prior knowledge — no fine-tuning, no "
-        "retrieval. Processes batches in a single tool call."
+        "retrieval. Processes batches in a single tool call. If the caller "
+        "supplies ground-truth labels alongside the statements, also returns "
+        "headline classification metrics (accuracy, precision, recall, f1, "
+        "confusion matrix) treating True as the positive class."
     ),
     instruction=ZERO_SHOT_INSTRUCTION,
     model=os.environ.get("ZERO_SHOT_AGENT_MODEL", "gemini-2.5-flash"),

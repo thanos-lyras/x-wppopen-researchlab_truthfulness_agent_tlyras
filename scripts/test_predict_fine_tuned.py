@@ -1,8 +1,9 @@
-"""Smoke-test the `predict_fine_tuned_truthfulness` MCP tool end-to-end.
+"""Smoke-test the unified `predict_truthfulness` MCP tool — fine-tuned path.
 
-Connects to the running MCP server over Streamable HTTP, lists tools to confirm
-the fine-tuned predictor is registered, then calls it with a small batch and
-prints the resolved model + predictions.
+Connects to the running MCP server over Streamable HTTP, confirms the tool is
+registered, then calls it twice with `use_fine_tuned=True`:
+  1. without labels — exercises the predictions-only path
+  2. with labels    — exercises the metrics-enabled path (accuracy, f1, etc.)
 
 Prereq:  `make run-mcp` is running in another terminal.
 
@@ -15,7 +16,6 @@ Usage:
 from __future__ import annotations
 
 import asyncio
-import json
 import os
 
 from mcp import ClientSession
@@ -31,10 +31,20 @@ _SAMPLE_POINTS = [
     {"statement": "The Earth orbits the Sun."},
     {"statement": "The Great Wall of China is visible from space with the naked eye."},
 ]
+_GROUND_TRUTH = [True, False]
+
+
+def _payload_text(result) -> str:
+    """Pull the first TextContent block from an MCP CallToolResult."""
+    for block in result.content:
+        text = getattr(block, "text", None)
+        if text is not None:
+            return text
+    return str(result.content)
 
 
 async def main() -> None:
-    resolved = config.FINE_TUNED_MODEL or f"(fallback) {config.BASE_MODEL}"
+    resolved = os.environ.get("FINE_TUNED_MODEL") or f"(fallback) {config.BASE_MODEL}"
     print(f"▶ MCP endpoint:  {_MCP_URL}")
     print(f"▶ Resolved model: {resolved}\n")
 
@@ -45,22 +55,29 @@ async def main() -> None:
             tools = await session.list_tools()
             names = [t.name for t in tools.tools]
             print(f"▶ Tools registered: {names}")
-            assert "predict_fine_tuned_truthfulness" in names, (
-                "predict_fine_tuned_truthfulness not exposed by the MCP server"
+            assert "predict_truthfulness" in names, (
+                "predict_truthfulness not exposed by the MCP server"
             )
 
+            # Path 1: predictions only — metrics should be None
+            print("\n▶ Call without labels (use_fine_tuned=True):")
             result = await session.call_tool(
-                "predict_fine_tuned_truthfulness",
-                arguments={"points": _SAMPLE_POINTS},
+                "predict_truthfulness",
+                arguments={"points": _SAMPLE_POINTS, "use_fine_tuned": True},
             )
+            print(_payload_text(result))
 
-            print("\n▶ Raw tool response:")
-            for block in result.content:
-                text = getattr(block, "text", str(block))
-                try:
-                    print(json.dumps(json.loads(text), indent=2))
-                except (ValueError, TypeError):
-                    print(text)
+            # Path 2: predictions + metrics — pass ground-truth labels
+            print("\n▶ Call with labels (use_fine_tuned=True):")
+            result = await session.call_tool(
+                "predict_truthfulness",
+                arguments={
+                    "points": _SAMPLE_POINTS,
+                    "use_fine_tuned": True,
+                    "labels": _GROUND_TRUTH,
+                },
+            )
+            print(_payload_text(result))
 
 
 if __name__ == "__main__":

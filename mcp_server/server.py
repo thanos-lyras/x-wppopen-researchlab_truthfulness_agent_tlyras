@@ -12,9 +12,9 @@ from starlette.applications import Starlette
 from starlette.routing import Mount
 
 from .tools.check_finetune_status import check_finetune_status_tool
+from .tools.explain import explain_truthfulness_tool
 from .tools.finetune import fine_tune_truthfulness_tool
 from .tools.predict import predict_truthfulness_tool
-from .tools.predict_fine_tuned import predict_fine_tuned_truthfulness_tool
 
 
 class TruthfulnessMcpServer:
@@ -48,7 +48,7 @@ class TruthfulnessMcpServer:
 # Compose tools here. To add a new tool: import it above and append to the list.
 app = TruthfulnessMcpServer(tools=[
     predict_truthfulness_tool,
-    predict_fine_tuned_truthfulness_tool,
+    explain_truthfulness_tool,
     fine_tune_truthfulness_tool,
     check_finetune_status_tool,
 ]).build_app()

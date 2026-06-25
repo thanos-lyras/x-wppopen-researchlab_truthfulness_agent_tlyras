@@ -25,7 +25,10 @@ zero_shot_remote_agent = RemoteA2aAgent(
     description=(
         "Classifies political statements as truthful (True) or untruthful "
         "(False) using a zero-shot LLM. Send a batch of statement dicts; "
-        "receive a list of booleans in the same order."
+        "receive a list of booleans in the same order. If ground-truth labels "
+        "are supplied alongside the statements, also returns headline "
+        "classification metrics (accuracy, precision, recall, f1, confusion "
+        "matrix)."
     ),
     agent_card=f"http://{_HOST}:{_PORT}{AGENT_CARD_WELL_KNOWN_PATH}",
     use_legacy=False,

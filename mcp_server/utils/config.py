@@ -35,7 +35,7 @@ LRM           = float(os.environ.get("FINE_TUNED_LRM", "1.0"))
 # updates from check_finetune_status take effect without an MCP server restart.
 # Docs / example file: see .env.example.
 
-# Last tuning job submitted — written automatically by TuningService.submit()
+# Last tuning job submitted — written automatically by TuningManager.submit()
 # so `check_finetune_status` can poll it later without the user re-typing the name.
 LAST_TUNING_JOB = os.environ.get("LAST_TUNING_JOB")
 

@@ -24,7 +24,7 @@ _MCP_URL = f"http://{_MCP_HOST}:{_MCP_PORT}/mcp"
 
 mcp_tools = McpToolset(
     connection_params=StreamableHTTPConnectionParams(url=_MCP_URL),
-    tool_filter=["predict_fine_tuned_truthfulness"],
+    tool_filter=["predict_truthfulness", "check_finetune_status"],
 )
 
 tools = [mcp_tools]
