@@ -28,7 +28,9 @@ from ..utils import config
 from ..utils.metrics import compute_metrics
 
 # ── Zero-shot config ─────────────────────────────────────────────────────────
-_ZERO_SHOT_MODEL = os.environ.get("ZERO_SHOT_MODEL", "gemini-2.5-flash")
+# `or` (not the default arg) so an explicitly empty value still falls back to the
+# default instead of crashing the genai client with "model is required".
+_ZERO_SHOT_MODEL = os.environ.get("ZERO_SHOT_MODEL") or "gemini-2.5-flash"
 
 _ZERO_SHOT_SYSTEM_INSTRUCTION = """You are an expert political fact-checker.
 
