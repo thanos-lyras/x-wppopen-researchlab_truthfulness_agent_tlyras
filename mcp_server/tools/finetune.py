@@ -1,13 +1,14 @@
-"""`fine_tune_truthfulness` MCP tool — composes DatasetService + GCSService + TuningService."""
+"""`fine_tune_truthfulness` MCP tool — composes DatasetProcessor + GCSService + TuningManager."""
 
 from __future__ import annotations
 
 from google.adk.tools.function_tool import FunctionTool
 
+from services.gcs_service import GCSService
+
 from ..utils import config
-from ..utils.dataset_service import DatasetService
-from ..utils.gcs_service import GCSService
-from ..utils.tuning_service import TuningService
+from ..utils.dataset_processor import DatasetProcessor
+from ..utils.tuning_manager import TuningManager
 
 
 def fine_tune_truthfulness(
@@ -32,13 +33,13 @@ def fine_tune_truthfulness(
         `job_name` (Vertex tuning job resource name), `state`, `tuned_model`
         (resource name if `wait=True` and job succeeded; else None).
     """
-    paths = DatasetService().prepare(csv_path)
+    paths = DatasetProcessor().prepare(csv_path)
 
     gcs = GCSService()
     train_uri = gcs.upload(paths["train"], f"finetuning/{config.BASE_MODEL}/train.jsonl")
     val_uri   = gcs.upload(paths["val"],   f"finetuning/{config.BASE_MODEL}/val.jsonl")
 
-    tuning = TuningService()
+    tuning = TuningManager()
     job = tuning.submit(train_uri, val_uri)
 
     result = {

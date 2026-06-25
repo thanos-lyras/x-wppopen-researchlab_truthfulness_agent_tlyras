@@ -9,7 +9,8 @@ JOB_RESOURCE_NAME looks like:
 
 import argparse
 
-from mcp_server.utils.tuning_service import TuningService
+from mcp_server.utils.tuning_manager import TuningManager
+from services.vertex_client import client
 
 
 def main():
@@ -18,10 +19,9 @@ def main():
                    help="Vertex tuning job resource name (from the original submit output)")
     args = p.parse_args()
 
-    tuning = TuningService()
-    job = tuning.client.tunings.get(name=args.job_name)
+    job = client.tunings.get(name=args.job_name)
     print(f"polling {args.job_name}\ncurrent state: {job.state}")
-    tuning.wait(job)
+    TuningManager().wait(job)
 
 
 if __name__ == "__main__":

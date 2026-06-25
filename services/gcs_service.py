@@ -4,7 +4,7 @@ from pathlib import Path
 
 from google.cloud import storage
 
-from . import config
+from mcp_server.utils import config
 
 
 class GCSService:

@@ -1,6 +1,6 @@
 """`check_finetune_status` MCP tool — poll the last SFT job and auto-update FINE_TUNED_MODEL.
 
-Reads `LAST_TUNING_JOB` (written by `TuningService.submit()` into `.env`), queries
+Reads `LAST_TUNING_JOB` (written by `TuningManager.submit()` into `.env`), queries
 Vertex for the job's current state, and — if SUCCEEDED — writes the deployed
 endpoint into `FINE_TUNED_MODEL` (both to `.env` for next boot and to the running
 process's `os.environ` so the predict tool picks it up on the next call). Idempotent:
@@ -10,7 +10,7 @@ Intended workflow:
     1. user calls `fine_tune_truthfulness(wait=false)`  → submits job, .env gets LAST_TUNING_JOB
     2. (~30-90 min pass; user may close their agent)
     3. user calls `check_finetune_status`               → updates FINE_TUNED_MODEL if ready
-    4. user calls `predict_fine_tuned_truthfulness`     → immediately hits the tuned endpoint
+    4. user calls `predict_truthfulness(..., use_fine_tuned=True)` → immediately hits the tuned endpoint
 """
 
 from __future__ import annotations
@@ -18,14 +18,11 @@ from __future__ import annotations
 import os
 
 from dotenv import set_key
-from google import genai
 from google.adk.tools.function_tool import FunctionTool
 
-from ..utils import config
+from services.vertex_client import client
 
-_client = genai.Client(
-    vertexai=True, project=config.PROJECT_ID, location=config.TUNING_LOCATION
-)
+from ..utils import config
 
 
 def check_finetune_status() -> dict:
@@ -51,7 +48,7 @@ def check_finetune_status() -> dict:
             "message": "no tuning job recorded — submit one first via fine_tune_truthfulness",
         }
 
-    job = _client.tunings.get(name=config.LAST_TUNING_JOB)
+    job = client.tunings.get(name=config.LAST_TUNING_JOB)
     state = job.state.name
     result = {
         "job_name": config.LAST_TUNING_JOB,
@@ -74,7 +71,7 @@ def check_finetune_status() -> dict:
             result["endpoint_updated"] = True
             result["message"] = (
                 f"updated FINE_TUNED_MODEL to {endpoint}. "
-                "Next predict_fine_tuned_truthfulness call will use the tuned endpoint."
+                "Next predict_truthfulness(..., use_fine_tuned=True) call will use the tuned endpoint."
             )
         else:
             result["message"] = "endpoint already up-to-date"

@@ -9,9 +9,9 @@ Usage:
 import argparse
 
 from mcp_server.utils import config
-from mcp_server.utils.dataset_service import DatasetService
-from mcp_server.utils.gcs_service import GCSService
-from mcp_server.utils.tuning_service import TuningService
+from mcp_server.utils.dataset_processor import DatasetProcessor
+from mcp_server.utils.tuning_manager import TuningManager
+from services.gcs_service import GCSService
 
 
 def main():
@@ -22,7 +22,7 @@ def main():
                    help="submit the SFT job and exit (don't block until terminal state)")
     args = p.parse_args()
 
-    paths = DatasetService().prepare()
+    paths = DatasetProcessor().prepare()
     if args.split_only:
         return
 
@@ -30,7 +30,7 @@ def main():
     train_uri = gcs.upload(paths["train"], f"finetuning/{config.BASE_MODEL}/train.jsonl")
     val_uri   = gcs.upload(paths["val"],   f"finetuning/{config.BASE_MODEL}/val.jsonl")
 
-    tuning = TuningService()
+    tuning = TuningManager()
     job = tuning.submit(train_uri, val_uri)
 
     if args.no_wait:

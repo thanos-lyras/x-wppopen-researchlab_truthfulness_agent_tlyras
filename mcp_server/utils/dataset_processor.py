@@ -9,7 +9,7 @@ from sklearn.model_selection import train_test_split
 from . import config
 
 
-class DatasetService:
+class DatasetProcessor:
     """CSV → preprocessed binary-label DataFrame → 3 stratified JSONL splits in Vertex SFT format."""
 
     def prepare(self, csv_path=None) -> dict[str, Path]:

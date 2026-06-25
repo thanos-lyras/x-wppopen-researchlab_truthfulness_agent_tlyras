@@ -8,7 +8,9 @@ Four agents are wired up so far:
 
 - **Orchestrator** (`agents/agent.py`) — root agent; entry point. Lives directly in `agents/` because it's always the entry. Delegates to the zero-shot predictor **over A2A** (no in-process import).
 - **Zero-shot Predictor** (`agents/zero_shot/`) — wraps a pure-LLM `predict_truthfulness(points)` tool (temperature=0). Each non-orchestrator agent gets its own subfolder.
-- **Fine-tuned Predictor** (`agents/fine_tuned/`) — same architecture as zero-shot. Wired to the `predict_fine_tuned_truthfulness` MCP tool, which routes inference through the Vertex AI tuned model named in `FINE_TUNED_MODEL` (`.env`). When `FINE_TUNED_MODEL` is unset, the tool falls back to `FINE_TUNED_BASE_MODEL` (and logs a warning) so the wiring stays smoke-testable before the first SFT job finishes — use `make test-fine-tuned` against a running MCP server to verify. Fine-tuning jobs are submitted via the `fine_tune_truthfulness` MCP tool (or `make finetune`); the job name is auto-persisted to `LAST_TUNING_JOB` in `.env`, so the `check_finetune_status` MCP tool can later poll it and self-heal `FINE_TUNED_MODEL` when training completes. `check_finetune_status` updates both `.env` (for next boot) and the running process's environment, so the very next `predict_fine_tuned_truthfulness` call hits the new endpoint — no MCP server restart needed.
+- **Fine-tuned Predictor** (`agents/fine_tuned/`) — same architecture as zero-shot. Calls the same unified `predict_truthfulness` MCP tool but with `use_fine_tuned=True`, which routes inference through the Vertex AI tuned model named in `FINE_TUNED_MODEL` (`.env`). When `FINE_TUNED_MODEL` is unset, the tool falls back to `FINE_TUNED_BASE_MODEL` (and logs a warning) so the wiring stays smoke-testable before the first SFT job finishes — use `make test-fine-tuned` against a running MCP server to verify. Fine-tuning jobs are submitted via the `fine_tune_truthfulness` MCP tool (or `make finetune`); the job name is auto-persisted to `LAST_TUNING_JOB` in `.env`, so the `check_finetune_status` MCP tool can later poll it and self-heal `FINE_TUNED_MODEL` when training completes. `check_finetune_status` updates both `.env` (for next boot) and the running process's environment, so the very next `predict_truthfulness(..., use_fine_tuned=True)` call hits the new endpoint — no MCP server restart needed.
+
+`predict_truthfulness` is one tool with two paths chosen by the `use_fine_tuned` flag (default False = zero-shot). It also accepts an optional `labels` argument (a list of ground-truth booleans, one per point). When provided, the response includes a `metrics` dict alongside `predictions` with accuracy, precision, recall, f1, support, and a confusion matrix (treating True as the positive class). Without `labels`, `metrics` is `None`.
 - **Explainer** (`agents/explainer/`) — same architecture as the predictors. Wired to a future `explain_truthfulness` MCP tool (not yet implemented).
 
 Because the orchestrator now talks to zero_shot over A2A, **the zero_shot A2A server must be running** when you exercise the orchestrator. Use `make dev` (runs both in parallel) as your default dev command.
@@ -23,7 +25,7 @@ truthfulness-agent/
 ├── main.py
 ├── data/                          # dataset lives here, gitignored
 ├── agents/
-│   ├── agent.py                   # Orchestrator: root_agent + a2a_app on :8000, sub_agents=[zero_shot_remote_agent]
+│   ├── agent.py                   # Orchestrator: root_agent + a2a_app on :8000, sub_agents=[fine_tuned_remote_agent, zero_shot_remote_agent, explainer_remote_agent]
 │   ├── prompt.py                  # Orchestrator instruction
 │   ├── zero_shot/
 │   │   ├── agent.py               # root_agent + a2a_app (the A2A server entry)
@@ -40,17 +42,20 @@ truthfulness-agent/
 │       ├── client.py              # explainer_remote_agent (RemoteA2aAgent)
 │       ├── prompt.py              # EXPLAINER_INSTRUCTION
 │       └── tools.py               # MANIFEST (wires the future `explain_truthfulness` MCP tool)
+├── services/                      # External-system client wrappers (top-level)
+│   ├── vertex_client.py           # Module-level Vertex-mode genai.Client singleton
+│   └── gcs_service.py             # GCSService (get-or-create bucket + upload a file)
 ├── mcp_server/                    # Shared tool server (MCP, Streamable HTTP)
 │   ├── server.py                  # TruthfulnessMcpServer class + composed `app` for uvicorn
-│   ├── utils/                     # Service-layer classes used by the MCP tools (engineer's pattern)
-│   │   ├── config.py              # Hyperparams, paths, label map, system instruction
-│   │   ├── dataset_service.py     # DatasetService (CSV → train/val/test JSONL)
-│   │   ├── gcs_service.py         # GCSService (get-or-create bucket + upload a file)
-│   │   └── tuning_service.py      # TuningService (Vertex SFT submit + wait)
-│   └── tools/
-│       ├── predict.py                  # predict_truthfulness (Component 1 — zero-shot)
-│       ├── predict_fine_tuned.py       # predict_fine_tuned_truthfulness (Component 2, endpoint 2 — uses FINE_TUNED_MODEL)
-│       ├── finetune.py                 # fine_tune_truthfulness (Component 2, endpoint 1)
+│   ├── utils/                     # App-level service code + config used by the MCP tools
+│   │   ├── config.py              # Hyperparams, paths, label map, system instruction, env-var reads
+│   │   ├── dataset_processor.py   # DatasetProcessor (CSV → train/val/test JSONL in Vertex SFT format)
+│   │   ├── tuning_manager.py      # TuningManager (Vertex SFT submit + poll + .env write-back)
+│   │   └── metrics.py             # compute_metrics (binary accuracy/precision/recall/f1/confusion matrix)
+│   └── tools/                     # One file per tool — thin wrappers over utils/ + services/
+│       ├── predict.py                  # predict_truthfulness (unified — `use_fine_tuned` flag picks zero-shot vs tuned endpoint)
+│       ├── explain.py                  # explain_truthfulness (predict + per-point natural-language explanation, same flags as predict)
+│       ├── finetune.py                 # fine_tune_truthfulness (submit SFT)
 │       └── check_finetune_status.py    # check_finetune_status (poll the last SFT job, auto-update FINE_TUNED_MODEL)
 ├── notebooks/                     # EDA + analysis (install via `make notebook`)
 │   └── 01_exploratory_data_analysis.ipynb
@@ -88,7 +93,7 @@ Place the dataset at `data/data.csv` (gitignored).
 | `make notebook`                      | Install `notebook` extra (jupyterlab/seaborn/matplotlib/missingno/shap) and open JupyterLab in `notebooks/` |
 | `make split`                         | Write `data/splits/{train,val,test}.jsonl` from `data.csv` (no GCS / no SFT) |
 | `make finetune`                      | Full pipeline: split → upload to GCS → submit Vertex SFT → wait for completion (requires `GCS_BUCKET` in `.env`) |
-| `make test-fine-tuned`               | Smoke-test the `predict_fine_tuned_truthfulness` MCP tool (requires `make run-mcp`); falls back to `FINE_TUNED_BASE_MODEL` when `FINE_TUNED_MODEL` is unset |
+| `make test-fine-tuned`               | Smoke-test the fine-tuned path of `predict_truthfulness` (`use_fine_tuned=True`); requires `make run-mcp`. Falls back to `FINE_TUNED_BASE_MODEL` when `FINE_TUNED_MODEL` is unset. |
 
 ### Port allocation
 
