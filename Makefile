@@ -73,6 +73,34 @@ run-mcp:
 	echo "▶ MCP tool server on port $$MCP_SERVER_PORT (endpoint /mcp)"; \
 	PYTHONPATH=. $(UV) run --env-file $(ENV_FILE) uvicorn mcp_server.server:app --host 0.0.0.0 --port $$MCP_SERVER_PORT --reload
 
+# Deploy the MCP server to Cloud Run via three sub-steps:
+#   1. Ensure the Artifact Registry repo exists.
+#   2. Build the image from Dockerfile.mcp via Cloud Build (using cloudbuild.yaml).
+#   3. Deploy the built image to Cloud Run with --no-allow-unauthenticated (callers
+#      must present a bearer token), passing runtime env vars from .env.
+# Captures the resulting HTTPS URL and writes MCP_SERVER_URL=<url>/mcp into .env so
+# subsequent agent deploys can resolve it.
+deploy-mcp:
+	@set -a; . $(ENV_FILE); set +a; \
+	REPO=cloud-run-source-deploy; \
+	IMAGE="$$GOOGLE_CLOUD_LOCATION-docker.pkg.dev/$$GOOGLE_CLOUD_PROJECT/$$REPO/truthfulness-mcp:latest"; \
+	echo "▶ Ensuring Artifact Registry repo $$REPO exists in $$GOOGLE_CLOUD_LOCATION..."; \
+	gcloud artifacts repositories describe $$REPO --location=$$GOOGLE_CLOUD_LOCATION --project=$$GOOGLE_CLOUD_PROJECT > /dev/null 2>&1 || \
+	  gcloud artifacts repositories create $$REPO --repository-format=docker --location=$$GOOGLE_CLOUD_LOCATION --project=$$GOOGLE_CLOUD_PROJECT; \
+	echo "▶ Building $$IMAGE via Cloud Build (Dockerfile.mcp)..."; \
+	gcloud builds submit --project=$$GOOGLE_CLOUD_PROJECT --config cloudbuild.yaml --substitutions _IMAGE_TAG=$$IMAGE . && \
+	echo "▶ Deploying to Cloud Run in $$GOOGLE_CLOUD_LOCATION..." && \
+	URL=$$(gcloud run deploy truthfulness-mcp \
+	    --image "$$IMAGE" \
+	    --region "$$GOOGLE_CLOUD_LOCATION" \
+	    --project "$$GOOGLE_CLOUD_PROJECT" \
+	    --no-allow-unauthenticated \
+	    --set-env-vars "GOOGLE_CLOUD_PROJECT=$$GOOGLE_CLOUD_PROJECT,GOOGLE_CLOUD_LOCATION=$$GOOGLE_CLOUD_LOCATION,GOOGLE_GENAI_USE_VERTEXAI=True,ZERO_SHOT_MODEL=$$ZERO_SHOT_MODEL,EXPLAINER_MODEL=$$EXPLAINER_MODEL,GCS_BUCKET=$$GCS_BUCKET,FINE_TUNED_BASE_MODEL=$$FINE_TUNED_BASE_MODEL,FINE_TUNED_EPOCHS=$$FINE_TUNED_EPOCHS,FINE_TUNED_ADAPTER_SIZE=$$FINE_TUNED_ADAPTER_SIZE,FINE_TUNED_LRM=$$FINE_TUNED_LRM,FINE_TUNED_MODEL=$$FINE_TUNED_MODEL,LAST_TUNING_JOB=$$LAST_TUNING_JOB" \
+	    --format='value(status.url)') && \
+	echo "✅ Deployed: $$URL" && \
+	$(UV) run python -c "from dotenv import set_key; set_key('.env', 'MCP_SERVER_URL', '$$URL/mcp/', quote_mode='never')" && \
+	echo "✅ Wrote MCP_SERVER_URL=$$URL/mcp/ to .env"
+
 # Smoke-test the predict_fine_tuned_truthfulness MCP tool end-to-end.
 # Requires `make run-mcp` running in another terminal.
 # When FINE_TUNED_MODEL is unset, the tool falls back to FINE_TUNED_BASE_MODEL.

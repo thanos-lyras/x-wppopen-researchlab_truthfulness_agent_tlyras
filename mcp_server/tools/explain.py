@@ -18,7 +18,10 @@ from services.vertex_client import client
 
 from .predict import predict_truthfulness
 
-EXPLAINER_MODEL = os.environ.get("EXPLAINER_MODEL", "gemini-2.5-flash")
+# `or` (not the default arg) so an explicitly empty value (e.g. EXPLAINER_MODEL=
+# in a misconfigured deploy) still falls back to the default instead of crashing
+# the genai client with "model is required".
+EXPLAINER_MODEL = os.environ.get("EXPLAINER_MODEL") or "gemini-2.5-flash"
 
 EXPLAINER_SYSTEM_INSTRUCTION = """You are a political fact-checking explainer.
 

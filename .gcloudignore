@@ -1,0 +1,38 @@
+# Patterns to exclude from the Cloud Build context for `gcloud run deploy --source .`
+# Mirrors .gitignore where it makes sense + a few build-only exclusions.
+
+.git/
+.gitignore
+.gcloudignore
+
+# Local virtualenv (the container builds its own via `uv sync`).
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+.python-version
+
+# Dataset + experimental artifacts (not needed at runtime; large).
+data/
+notebooks/
+
+# Local dev configs that should NOT ship in the image — Cloud Run env vars
+# are set via --set-env-vars in the deploy command instead.
+.env
+.env.example
+
+# Repo-level docs / tooling (not needed at runtime).
+README.md
+CLAUDE.md
+Makefile
+
+# Things specific to local agent A2A servers (Cloud Run only hosts MCP).
+agents/
+
+# CLI scripts (run locally; not needed in MCP container).
+scripts/
+
+# Editor noise.
+.DS_Store
+.idea/
+.vscode/
