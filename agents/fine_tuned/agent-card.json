@@ -1,0 +1,65 @@
+{
+  "protocolVersion": "0.3.0",
+  "name": "fine_tuned_predictor",
+  "description": "Two capabilities: (1) classifies political statements as True or False using a Gemini model fine-tuned on the project's training split, processing batches in a single tool call \u2014 and if the caller supplies ground-truth labels alongside the statements, also returns headline classification metrics (accuracy, precision, recall, f1, confusion matrix); (2) reports on the underlying fine-tuning job \u2014 current state, whether the tuned endpoint is ready, and can refresh which endpoint future predictions use.",
+  "version": "1.0.0",
+  "preferredTransport": "HTTP+JSON",
+  "defaultInputModes": [
+    "application/json",
+    "text/plain"
+  ],
+  "defaultOutputModes": [
+    "application/json",
+    "text/plain"
+  ],
+  "capabilities": {},
+  "skills": [
+    {
+      "id": "classify_truthfulness_fine_tuned",
+      "name": "Classify truthfulness (fine-tuned)",
+      "description": "Returns True/False per statement using the SFT-tuned Gemini endpoint named in FINE_TUNED_MODEL. Statement-only prompt to match the v1 SFT training format. Falls back to the base model with a warning if no tuned endpoint is configured.",
+      "tags": [
+        "truthfulness",
+        "classification",
+        "fine-tuned",
+        "binary",
+        "sft"
+      ],
+      "examples": [
+        "Verify with the tuned model: The Earth orbits the Sun.",
+        "Classify these using fine-tuned: ..."
+      ]
+    },
+    {
+      "id": "evaluate_predictions",
+      "name": "Evaluate predictions against ground truth",
+      "description": "When ground-truth labels are passed alongside statements, returns accuracy, precision, recall, f1, and a confusion matrix in addition to the predictions.",
+      "tags": [
+        "evaluation",
+        "metrics",
+        "binary-classification"
+      ],
+      "examples": [
+        "Verify these with labels [true, false, true] using fine-tuned: ...",
+        "Score these tuned predictions against ground truth."
+      ]
+    },
+    {
+      "id": "check_finetune_status",
+      "name": "Check fine-tuning job status",
+      "description": "Polls the latest submitted Vertex AI SFT job; on success, auto-updates the FINE_TUNED_MODEL env var so future predictions route to the freshly-trained endpoint without an MCP restart.",
+      "tags": [
+        "fine-tuning",
+        "status",
+        "sft",
+        "vertex-ai"
+      ],
+      "examples": [
+        "Is the fine-tuning model ready?",
+        "What is the status of the latest tuning job?",
+        "Refresh the tuned endpoint."
+      ]
+    }
+  ],
+  "url": "https://placeholder.invalid/a2a"
+}
