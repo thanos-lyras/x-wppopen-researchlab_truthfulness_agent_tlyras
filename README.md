@@ -59,8 +59,12 @@ truthfulness-agent/
 │       └── check_finetune_status.py    # check_finetune_status (poll the last SFT job, auto-update FINE_TUNED_MODEL)
 ├── notebooks/                     # EDA + analysis (install via `make notebook`)
 │   └── 01_exploratory_data_analysis.ipynb
-└── scripts/
-    └── finetune.py                # CLI orchestrator (`make split` / `make finetune`) — same services as the MCP tool
+├── scripts/
+│   └── finetune.py                # CLI orchestrator (`make split` / `make finetune`) — same services as the MCP tool
+└── terraform/                     # Declarative service definition (alternative to `make deploy-unified`)
+    ├── main.tf                    # Artifact Registry repo + Cloud Run service + public-invoker IAM
+    ├── variables.tf               # project_id / region / service_name / repo_name / env_vars (defaults inline)
+    └── outputs.tf                 # service_url
 ```
 
 ## Setup
@@ -125,22 +129,68 @@ The card is built by ADK's `to_a2a()` helper directly from the `Agent(...)` defi
 
 ## Deploy to GCP
 
-The entire stack — including the 4 agents and the shared MCP tool server — can be deployed as a single, unified service on **Cloud Run** using a single container.
+The entire stack — 4 agents + MCP server — runs as a single Cloud Run service.
+Terraform owns the whole deploy: a `null_resource` builds + pushes the
+container image (via [terraform/build_image.sh](terraform/build_image.sh) →
+[terraform/build_image.py](terraform/build_image.py) → `gcloud builds submit`),
+then the Cloud Run service and IAM binding get created.
 
-To deploy the unified stack:
+### Quickest path — `make`
 
 ```bash
-# Build and deploy the unified container to Cloud Run, and save its URL to .env
-make deploy-unified
+make deploy        # terraform init + apply, then writes UNIFIED_APP_URL to .env
+make destroy       # tears down the Cloud Run service + IAM (leaves the image and repo)
 ```
 
-After deployment, the service is accessible at the URL written to `UNIFIED_APP_URL` in `.env`.
-Internally, the unified application handles routing to the individual agents and the MCP server via URL path prefixes:
-- **Orchestrator Agent**: `https://<UNIFIED_APP_URL>/`
-- **Zero-shot Predictor Agent**: `https://<UNIFIED_APP_URL>/zero_shot`
-- **Fine-tuned Predictor Agent**: `https://<UNIFIED_APP_URL>/fine_tuned`
-- **Explainer Agent**: `https://<UNIFIED_APP_URL>/explainer`
-- **MCP Tool Server**: `https://<UNIFIED_APP_URL>/mcp`
+### Or use Terraform directly
+
+All Terraform commands expect the `.tf` files in the **current directory**, so
+`cd terraform` first and then run plain `terraform`:
+
+```bash
+cd terraform
+
+terraform init              # first time only
+terraform apply             # builds the image + creates/updates the service
+terraform output -raw service_url   # print the URL
+
+terraform destroy           # teardown
+```
+
+(The `make` targets just wrap these — they pass `-chdir=terraform` so they can
+be run from the repo root, and they additionally write `UNIFIED_APP_URL` back
+to `.env` after apply.)
+
+After deploy, the service URL is reachable at:
+- **Orchestrator**: `https://<service_url>/`
+- **Zero-shot Predictor**: `https://<service_url>/zero_shot`
+- **Fine-tuned Predictor**: `https://<service_url>/fine_tuned`
+- **Explainer**: `https://<service_url>/explainer`
+- **MCP Tool Server**: `https://<service_url>/mcp`
+
+### How env vars reach the container
+
+The Cloud Run service ships with **no env vars set by Terraform**. Everything resolves at runtime:
+- `GOOGLE_CLOUD_PROJECT` — auto-detected from runtime ADC ([agents/__init__.py](agents/__init__.py), [mcp_server/__init__.py](mcp_server/__init__.py))
+- `GOOGLE_CLOUD_LOCATION`, `GOOGLE_GENAI_USE_VERTEXAI` — defaults set in the same `__init__.py` files
+- `ZERO_SHOT_MODEL`, `EXPLAINER_MODEL`, `FINE_TUNED_*` — defaults in [mcp_server/utils/config.py](mcp_server/utils/config.py) and the per-tool modules
+- `FINE_TUNED_MODEL`, `LAST_TUNING_JOB`, `GCS_BUCKET` — resolved at first use (see `check_finetune_status`, `GCSService._default_name`)
+
+To override a default, edit the code (single source of truth) rather than
+plumbing env vars through Terraform.
+
+### Terraform layout
+
+| File                                              | Owns                                                       |
+| ------------------------------------------------- | ---------------------------------------------------------- |
+| [terraform/main.tf](terraform/main.tf)            | Provider, `null_resource.build_image`, Cloud Run service, IAM |
+| [terraform/variables.tf](terraform/variables.tf)  | `project_id` / `region` / `service_name` (all with defaults) |
+| [terraform/outputs.tf](terraform/outputs.tf)      | `service_url`                                              |
+| [terraform/build_image.sh](terraform/build_image.sh) | Bash wrapper invoked by `null_resource` (cd's to repo root) |
+| [terraform/build_image.py](terraform/build_image.py) | Python: ensures Artifact Registry repo, runs `gcloud builds submit` |
+
+State is local (`terraform/terraform.tfstate`, gitignored). Single-developer
+scope; revisit a remote backend when adding a second contributor.
 
 ### Test fixtures
 

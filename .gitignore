@@ -19,3 +19,10 @@ data/*.jsonl
 *.pt
 *.bin
 data science challenge with agents/
+
+# Terraform
+terraform/.terraform/
+terraform/.terraform.lock.hcl
+terraform/terraform.tfstate*
+terraform/terraform.tfvars
+terraform/crash*.log

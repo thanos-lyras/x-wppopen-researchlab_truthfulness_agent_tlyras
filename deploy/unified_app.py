@@ -41,10 +41,18 @@ from agents.agent import a2a_app as orchestrator_app
 
 
 # 3. Handle unified lifespan manager
+#
+# Each `to_a2a()` sub-app registers its A2A routes (/.well-known/agent-card.json,
+# POST /) inside its OWN lifespan via `setup_a2a()`. Starlette doesn't propagate
+# lifespan to mounted sub-apps by default — so we chain each sub-app's lifespan
+# here. Without this, every A2A endpoint 404s and the orchestrator can't even
+# fetch its sub-agents' cards over loopback.
 @contextlib.asynccontextmanager
 async def unified_lifespan(app: Starlette) -> AsyncIterator[None]:
-    # Start the MCP session background loop
-    async with mcp_session.run():
+    async with contextlib.AsyncExitStack() as stack:
+        await stack.enter_async_context(mcp_session.run())
+        for sub in (zero_shot_app, fine_tuned_app, explainer_app, orchestrator_app):
+            await stack.enter_async_context(sub.router.lifespan_context(sub))
         yield
 
 

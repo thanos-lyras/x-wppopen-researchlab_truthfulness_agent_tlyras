@@ -4,10 +4,7 @@ import os
 from pathlib import Path
 
 # Paths
-DATA_CSV = Path(os.environ.get(
-    "TRUTHFULNESS_CSV",
-    "/Users/thanos.lyras/Desktop/Satalia-projects/internal/data science challenge with agents/data.csv",
-))
+DATA_CSV = Path(os.environ.get("TRUTHFULNESS_CSV", "data/data.csv"))
 SPLITS_DIR = Path("data/splits")
 
 # Split

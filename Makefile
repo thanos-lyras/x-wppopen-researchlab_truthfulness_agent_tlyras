@@ -1,6 +1,9 @@
 SHELL := /bin/bash
 UV := uv
 ENV_FILE := .env
+TF_DIR := terraform
+
+.PHONY: deploy destroy
 
 # Create .env from .env.example if it's missing
 configure:
@@ -74,9 +77,16 @@ run-mcp:
 	PYTHONPATH=. $(UV) run --env-file $(ENV_FILE) uvicorn mcp_server.server:app --host 0.0.0.0 --port $$MCP_SERVER_PORT --reload
 
 
-# Deploy the unified truthfulness stack (MCP + 4 Agents) to a single Cloud Run service.
-deploy-unified:
-	PYTHONPATH=. $(UV) run --env-file $(ENV_FILE) python -m deploy.deploy_unified
+# Deploy the unified truthfulness stack (MCP + 4 Agents) to Cloud Run.
+# Terraform owns the whole flow now: a null_resource calls terraform/build_image.sh
+# to build + push the container before creating/updating the Cloud Run service.
+# This target just runs terraform apply and writes the resulting URL to .env.
+deploy:
+	@terraform -chdir=$(TF_DIR) init -input=false
+	@terraform -chdir=$(TF_DIR) apply -auto-approve
+	@URL=$$(terraform -chdir=$(TF_DIR) output -raw service_url); \
+	$(UV) run python -c "from dotenv import set_key; set_key('$(ENV_FILE)', 'UNIFIED_APP_URL', '$$URL', quote_mode='never')"; \
+	echo "✅ $$URL"
 
 
 # Smoke-test the predict_fine_tuned_truthfulness MCP tool end-to-end.
@@ -84,6 +94,11 @@ deploy-unified:
 # When FINE_TUNED_MODEL is unset, the tool falls back to FINE_TUNED_BASE_MODEL.
 test-fine-tuned:
 	PYTHONPATH=. $(UV) run --env-file $(ENV_FILE) python -m scripts.test_predict_fine_tuned
+
+# Hit each of the 4 MCP tools on the deployed Cloud Run service in sequence.
+# Reads UNIFIED_APP_URL from .env, fetches a fresh gcloud identity token.
+test-deployed-mcp:
+	@bash scripts/test_deployed_mcp.sh
 
 # Per-agent shorthand wrappers so `make dev` can spin up all three A2A backends in parallel
 # (Make can't invoke the same target twice with different args inside one -j run).
@@ -102,6 +117,11 @@ run-a2a-explainer:
 #     make run-a2a NAME=orchestrator
 dev:
 	$(MAKE) -j 5 run-mcp run-a2a-zero-shot run-a2a-fine-tuned run-a2a-explainer run-web
+
+# Tear down the Cloud Run service + IAM binding (leaves the Artifact Registry
+# repo and built images intact — `gcloud artifacts repositories delete` for those).
+destroy:
+	terraform -chdir=$(TF_DIR) destroy -auto-approve -var=image=unused
 
 # Cleanup the venv and Python caches
 clean:
