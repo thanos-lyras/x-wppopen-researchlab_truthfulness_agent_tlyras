@@ -107,14 +107,17 @@ deploy-mcp:
 test-fine-tuned:
 	PYTHONPATH=. $(UV) run --env-file $(ENV_FILE) python -m scripts.test_predict_fine_tuned
 
-# Per-agent shorthand wrappers so `make dev` can spin up all three A2A backends in parallel
-# (Make can't invoke the same target twice with different args inside one -j run).
+# Per-agent shorthand wrappers so `make dev`/`make dev-no-ui` can spin up
+# A2A backends in parallel (Make can't invoke the same target twice with
+# different args inside one -j run).
 run-a2a-zero-shot:
 	$(MAKE) run-a2a NAME=zero_shot
 run-a2a-fine-tuned:
 	$(MAKE) run-a2a NAME=fine_tuned
 run-a2a-explainer:
 	$(MAKE) run-a2a NAME=explainer
+run-a2a-orchestrator:
+	$(MAKE) run-a2a NAME=orchestrator
 
 # Parallel dev stack: MCP (:8004) + zero_shot A2A (:8001) + fine_tuned A2A (:8002) +
 # explainer A2A (:8003) + browser playground (:8080).
@@ -124,6 +127,12 @@ run-a2a-explainer:
 #     make run-a2a NAME=orchestrator
 dev:
 	$(MAKE) -j 5 run-mcp run-a2a-zero-shot run-a2a-fine-tuned run-a2a-explainer run-web
+
+# Same as `dev` but no browser UI — orchestrator A2A on :8000 takes the slot
+# instead, so you can curl the orchestrator directly:
+#   curl -sS -X POST http://localhost:8000/ ...
+dev-no-ui:
+	$(MAKE) -j 5 run-mcp run-a2a-zero-shot run-a2a-fine-tuned run-a2a-explainer run-a2a-orchestrator
 
 # Cleanup the venv and Python caches
 clean:

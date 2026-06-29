@@ -22,6 +22,7 @@ import os
 from google.adk.tools.function_tool import FunctionTool
 from google.genai import types
 
+from schemas.models import BinaryPrediction, Metrics, Point, PredictRequest, PredictResponse
 from services.vertex_client import client
 
 from ..utils import config
@@ -35,14 +36,16 @@ _ZERO_SHOT_MODEL = os.environ.get("ZERO_SHOT_MODEL") or "gemini-2.5-flash"
 _ZERO_SHOT_SYSTEM_INSTRUCTION = """You are an expert political fact-checker.
 
 Given a statement (and optionally metadata about the speaker and context),
-decide whether it is truthful (True) or untruthful (False) using your own
-prior knowledge — no retrieval.
+decide whether it is truthful or untruthful using your own prior knowledge —
+no retrieval.
 
 Map the six-way human label space onto the binary target:
-- True  ← true, mostly-true, half-true
-- False ← barely-true, false, extremely-false
+- truthful   ← true, mostly-true, half-true
+- untruthful ← barely-true, false, extremely-false
 
-Reply with a single word and nothing else: True or False.
+Return a JSON object with a single boolean field `verdict`:
+- `{"verdict": true}`  for truthful
+- `{"verdict": false}` for untruthful
 """
 
 _METADATA_FIELDS = [
@@ -57,6 +60,8 @@ _METADATA_FIELDS = [
 _zero_shot_gen_config = types.GenerateContentConfig(
     system_instruction=_ZERO_SHOT_SYSTEM_INSTRUCTION,
     temperature=0.0,
+    response_mime_type="application/json",
+    response_schema=BinaryPrediction,
 )
 
 # ── Fine-tuned config ────────────────────────────────────────────────────────
@@ -69,23 +74,25 @@ _fine_tuned_gen_config = types.GenerateContentConfig(
 
 
 # ── Zero-shot helpers ────────────────────────────────────────────────────────
-def _format_zero_shot_prompt(point: dict) -> str:
+def _format_zero_shot_prompt(point: Point) -> str:
     """Multiline prompt: statement first, then any optional metadata fields present."""
-    lines = [f"Statement: {point['statement']}"]
+    lines = [f"Statement: {point.statement}"]
     for label, key in _METADATA_FIELDS:
-        value = point.get(key)
+        value = getattr(point, key)
         if value:
             lines.append(f"{label}: {value}")
     return "\n".join(lines)
 
 
-def _predict_zero_shot(point: dict) -> bool:
+def _predict_zero_shot(point: Point) -> bool:
     response = client.models.generate_content(
         model=_ZERO_SHOT_MODEL,
         contents=_format_zero_shot_prompt(point),
         config=_zero_shot_gen_config,
     )
-    return response.text.strip().lower().startswith("true")
+    # Structured output: Gemini returns JSON conforming to BinaryPrediction
+    # ({"verdict": true|false}). Pydantic parses and validates — no substring matching.
+    return BinaryPrediction.model_validate_json(response.text).verdict
 
 
 # ── Fine-tuned helpers ───────────────────────────────────────────────────────
@@ -103,53 +110,41 @@ def _resolve_fine_tuned_model() -> str:
     return config.BASE_MODEL
 
 
-def _predict_fine_tuned(point: dict, model: str) -> bool:
+def _predict_fine_tuned(point: Point, model: str) -> bool:
     # Statement-only — matches the v1 SFT training format. Metadata fields on `point`
     # are intentionally ignored to keep train/serve prompts identical.
     response = client.models.generate_content(
         model=model,
-        contents=point["statement"],
+        contents=point.statement,
         config=_fine_tuned_gen_config,
     )
     return response.text.strip().lower().startswith("true")
 
 
 # ── Public entry ─────────────────────────────────────────────────────────────
-def predict_truthfulness(
-    points: list[dict],
-    use_fine_tuned: bool = False,
-    labels: list[bool] | None = None,
-) -> dict:
+def predict_truthfulness(req: PredictRequest) -> PredictResponse:
     """Classify a batch of statements as truthful (True) or untruthful (False).
 
-    Args:
-        points: List of statements. Each item is a dict with at least `statement`.
-            In zero-shot mode, optional metadata fields enrich the prompt:
-            `subjects`, `speaker_name`, `speaker_job`, `speaker_state`,
-            `speaker_affiliation`, `statement_context`. In fine-tuned mode only
-            `statement` is used (to match the v1 SFT training format).
-        use_fine_tuned: When False (default), classify via the zero-shot model
-            (`ZERO_SHOT_MODEL`, default `gemini-2.5-flash`). When True, route
-            through the deployed tuned endpoint (`FINE_TUNED_MODEL`). If True
-            and `FINE_TUNED_MODEL` is unset, falls back to `FINE_TUNED_BASE_MODEL`
-            and emits a warning.
-        labels: Optional ground-truth booleans (one per point, same order). When
-            provided, the response includes headline metrics (accuracy, precision,
-            recall, f1, confusion matrix) treating True as the positive class.
+    See `schemas.models.PredictRequest` / `PredictResponse` for field-level docs.
 
-    Returns:
-        Dict with:
-        - `predictions`: List[bool], one per input point, in order.
-        - `metrics`: dict (when `labels` is provided) or None.
+    Behavior summary:
+    - `req.use_fine_tuned=False` → zero-shot via ZERO_SHOT_MODEL with metadata-enriched prompt.
+    - `req.use_fine_tuned=True`  → tuned endpoint (FINE_TUNED_MODEL) with statement-only
+      prompt; falls back to FINE_TUNED_BASE_MODEL with a warning if unset.
+    - `req.labels` supplied → response includes a `metrics` block (treating True as positive).
     """
-    if use_fine_tuned:
+    if req.use_fine_tuned:
         model = _resolve_fine_tuned_model()
-        predictions = [_predict_fine_tuned(p, model) for p in points]
+        predictions = [_predict_fine_tuned(p, model) for p in req.points]
     else:
-        predictions = [_predict_zero_shot(p) for p in points]
+        predictions = [_predict_zero_shot(p) for p in req.points]
 
-    metrics = compute_metrics(predictions, labels) if labels is not None else None
-    return {"predictions": predictions, "metrics": metrics}
+    metrics = (
+        Metrics.model_validate(compute_metrics(predictions, req.labels))
+        if req.labels is not None
+        else None
+    )
+    return PredictResponse(predictions=predictions, metrics=metrics)
 
 
 predict_truthfulness_tool = FunctionTool(predict_truthfulness)

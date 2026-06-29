@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from google.adk.tools.function_tool import FunctionTool
 
+from schemas.models import FineTuneRequest, FineTuneResponse, SplitCounts
 from services.gcs_service import GCSService
 
 from ..utils import config
@@ -11,29 +12,18 @@ from ..utils.dataset_processor import DatasetProcessor
 from ..utils.tuning_manager import TuningManager
 
 
-def fine_tune_truthfulness(
-    csv_path: str | None = None,
-    wait: bool = False,
-) -> dict:
+def fine_tune_truthfulness(req: FineTuneRequest) -> FineTuneResponse:
     """Fine-tune a Gemini model for binary truthfulness classification.
 
-    Performs data preparation (6-way → binary label mapping + stratified 80/10/10
-    split), uploads train+val JSONL to GCS, and submits a Vertex AI Gemini SFT job.
+    See `schemas.models.FineTuneRequest` / `FineTuneResponse` for field-level docs.
 
-    Args:
-        csv_path: Path to a CSV with the same columns as `data.csv`
-            (including a `Label` column). If omitted, uses the project's default
-            `data.csv` from `mcp_server/utils/config.py`.
-        wait: If True, block until the SFT job reaches a terminal state and
-            return the tuned-model resource name. If False (default), submit and
-            return the job name immediately — the caller is responsible for polling.
-
-    Returns:
-        Dict with: `split` (row counts per split), `train_gcs_uri`, `val_gcs_uri`,
-        `job_name` (Vertex tuning job resource name), `state`, `tuned_model`
-        (resource name if `wait=True` and job succeeded; else None).
+    Behavior summary:
+    - Prepares the dataset (6-way → binary label map + stratified 80/10/10 split).
+    - Uploads train + val JSONL to GCS.
+    - Submits a Vertex AI Gemini SFT job.
+    - If `req.wait=True`, blocks until terminal state and fills `tuned_model`.
     """
-    paths = DatasetProcessor().prepare(csv_path)
+    paths = DatasetProcessor().prepare(req.csv_path)
 
     gcs = GCSService()
     train_uri = gcs.upload(paths["train"], f"finetuning/{config.BASE_MODEL}/train.jsonl")
@@ -42,22 +32,24 @@ def fine_tune_truthfulness(
     tuning = TuningManager()
     job = tuning.submit(train_uri, val_uri)
 
-    result = {
-        "split": {k: sum(1 for _ in open(p)) for k, p in paths.items()},
-        "train_gcs_uri": train_uri,
-        "val_gcs_uri":   val_uri,
-        "job_name":      job.name,
-        "state":         str(job.state),
-        "tuned_model":   None,
-    }
+    split = SplitCounts(**{k: sum(1 for _ in open(p)) for k, p in paths.items()})
+    state = str(job.state)
+    tuned_model: str | None = None
 
-    if wait:
+    if req.wait:
         job = tuning.wait(job)
-        result["state"] = str(job.state)
+        state = str(job.state)
         if job.tuned_model and job.tuned_model.model:
-            result["tuned_model"] = job.tuned_model.model
+            tuned_model = job.tuned_model.model
 
-    return result
+    return FineTuneResponse(
+        split=split,
+        train_gcs_uri=train_uri,
+        val_gcs_uri=val_uri,
+        job_name=job.name,
+        state=state,
+        tuned_model=tuned_model,
+    )
 
 
 fine_tune_truthfulness_tool = FunctionTool(fine_tune_truthfulness)

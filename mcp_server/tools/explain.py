@@ -14,6 +14,13 @@ import os
 from google.adk.tools.function_tool import FunctionTool
 from google.genai import types
 
+from schemas.models import (
+    ExplainedPrediction,
+    ExplainRequest,
+    ExplainResponse,
+    Point,
+    PredictRequest,
+)
 from services.vertex_client import client
 
 from .predict import predict_truthfulness
@@ -46,12 +53,12 @@ _gen_config = types.GenerateContentConfig(
 )
 
 
-def _explain_one(point: dict, prediction: bool) -> str:
+def _explain_one(point: Point, prediction: bool) -> str:
     """One free-form call per (statement, verdict) pair."""
     verdict = "True (truthful)" if prediction else "False (untruthful)"
-    lines = [f"Statement: {point['statement']}", f"Verdict: {verdict}"]
+    lines = [f"Statement: {point.statement}", f"Verdict: {verdict}"]
     for label, key in _METADATA_FIELDS:
-        value = point.get(key)
+        value = getattr(point, key)
         if value:
             lines.append(f"{label}: {value}")
     response = client.models.generate_content(
@@ -62,39 +69,24 @@ def _explain_one(point: dict, prediction: bool) -> str:
     return response.text.strip()
 
 
-def explain_truthfulness(
-    points: list[dict],
-    use_fine_tuned: bool = False,
-    labels: list[bool] | None = None,
-) -> dict:
+def explain_truthfulness(req: ExplainRequest) -> ExplainResponse:
     """Classify each statement and explain the verdict.
 
-    Args:
-        points: List of statements. Each item is a dict with at least
-            `statement` (plus optional speaker/subjects/context metadata
-            used in both the predictor and the explainer prompts).
-        use_fine_tuned: Which predictor produces the verdicts. False (default)
-            = zero-shot model; True = the deployed tuned endpoint (falls back
-            to FINE_TUNED_BASE_MODEL with a warning if unset). The explainer
-            model is independent.
-        labels: Optional ground-truth booleans (one per point, same order).
-            When provided, the response includes headline metrics on the
-            underlying predictions (treating True as the positive class).
+    See `schemas.models.ExplainRequest` / `ExplainResponse` for field-level docs.
 
-    Returns:
-        Dict with:
-        - `results`: list of `{"prediction": bool, "explanation": str}`,
-          one per input point, in order.
-        - `metrics`: dict (when `labels` is provided) or None.
+    Behavior summary:
+    - Verdicts come from `predict_truthfulness` (zero-shot or fine-tuned, by `req.use_fine_tuned`).
+    - Per-point explanations come from EXPLAINER_MODEL (independent, free-form).
+    - `req.labels` supplied → response includes a `metrics` block on the underlying predictions.
     """
-    pred = predict_truthfulness(points, use_fine_tuned=use_fine_tuned, labels=labels)
-    predictions = pred["predictions"]
-    explanations = [_explain_one(p, v) for p, v in zip(points, predictions)]
+    pred = predict_truthfulness(
+        PredictRequest(points=req.points, use_fine_tuned=req.use_fine_tuned, labels=req.labels)
+    )
     results = [
-        {"prediction": v, "explanation": e}
-        for v, e in zip(predictions, explanations)
+        ExplainedPrediction(prediction=v, explanation=_explain_one(p, v))
+        for p, v in zip(req.points, pred.predictions)
     ]
-    return {"results": results, "metrics": pred["metrics"]}
+    return ExplainResponse(results=results, metrics=pred.metrics)
 
 
 explain_truthfulness_tool = FunctionTool(explain_truthfulness)
