@@ -123,6 +123,25 @@ When all three A2A services are running:
 
 The card is built by ADK's `to_a2a()` helper directly from the `Agent(...)` definition — no manual `agent.json` is needed. Each agent module just needs `a2a_app = to_a2a(root_agent, port=int(os.environ["<NAME>_A2A_PORT"]))`.
 
+## Deploy to GCP
+
+The entire stack — including the 4 agents and the shared MCP tool server — can be deployed as a single, unified service on **Cloud Run** using a single container.
+
+To deploy the unified stack:
+
+```bash
+# Build and deploy the unified container to Cloud Run, and save its URL to .env
+make deploy-unified
+```
+
+After deployment, the service is accessible at the URL written to `UNIFIED_APP_URL` in `.env`.
+Internally, the unified application handles routing to the individual agents and the MCP server via URL path prefixes:
+- **Orchestrator Agent**: `https://<UNIFIED_APP_URL>/`
+- **Zero-shot Predictor Agent**: `https://<UNIFIED_APP_URL>/zero_shot`
+- **Fine-tuned Predictor Agent**: `https://<UNIFIED_APP_URL>/fine_tuned`
+- **Explainer Agent**: `https://<UNIFIED_APP_URL>/explainer`
+- **MCP Tool Server**: `https://<UNIFIED_APP_URL>/mcp`
+
 ### Test fixtures
 
 `data/` contains small hand-curated JSON batches you can paste into the agent's chat:

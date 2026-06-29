@@ -5,7 +5,16 @@ description = "Multi-agent truthfulness classifier built on Google ADK 2.0."
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
-    "google-adk[gcp]>=2.0.0,<3.0.0",
+    # Pinned to 2.1.0 because newer ADK (≥2.2) breaks the Reasoning Engine A2A
+    # path handlers — Vertex's frontend hits `/api/a2a/v1/card` + `/api/stream_reasoning_engine`
+    # and gets 404s in 2.3.0 even with the [a2a] extra. 2.1.0 is the reference repo's
+    # known-good version. Revisit when ADK ships a fix.
+    #
+    # Extras:
+    #   gcp            — Google Cloud auth integration
+    #   a2a            — A2A protocol handlers (HTTP route exposure)
+    #   agent-identity — service-account auth for inter-agent + Reasoning Engine runtime
+    "google-adk[gcp,a2a,agent-identity]==2.1.0",
     "a2a-sdk[http-server]>=0.3.0,<1.0.0",
     "mcp>=1.2.0",
     # pandas + scikit-learn are imported at MCP startup via DatasetService,

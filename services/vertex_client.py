@@ -1,7 +1,8 @@
 """Module-level Vertex-mode genai client shared across services and MCP tools.
 
-Pinning to `TUNING_LOCATION` (regional) is required for tuned-endpoint inference;
-base-model calls (e.g. zero-shot gemini-2.5-flash) work identically in any region.
+Pinned to a regional `LOCATION` (us-central1 by default) — required for both
+tuned-endpoint inference and SFT job submission. Base-model calls (e.g. zero-shot
+gemini-2.5-flash) work in any region; the regional pin doesn't hurt them.
 """
 
 from google import genai
@@ -9,5 +10,5 @@ from google import genai
 from mcp_server.utils import config
 
 client = genai.Client(
-    vertexai=True, project=config.PROJECT_ID, location=config.TUNING_LOCATION
+    vertexai=True, project=config.PROJECT_ID, location=config.LOCATION
 )

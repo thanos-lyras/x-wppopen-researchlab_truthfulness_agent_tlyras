@@ -1,0 +1,76 @@
+{
+  "protocolVersion": "0.3.0",
+  "name": "truthfulness_orchestrator",
+  "description": "Single entry point for truthfulness classification + explanation. Delegates over A2A to specialist sub-agents: fine_tuned_predictor (default for classification + fine-tuning status), zero_shot_predictor (baseline on request), and explainer (when reasoning is asked for). Returns a consolidated response per request.",
+  "version": "1.0.0",
+  "preferredTransport": "HTTP+JSON",
+  "defaultInputModes": [
+    "application/json",
+    "text/plain"
+  ],
+  "defaultOutputModes": [
+    "application/json",
+    "text/plain"
+  ],
+  "capabilities": {},
+  "skills": [
+    {
+      "id": "verify_statements",
+      "name": "Verify statement(s) \u2014 True/False",
+      "description": "Delegates classification to fine_tuned_predictor (default) or zero_shot_predictor if the caller asks for the baseline. Supports batch input and optional ground-truth labels for metrics.",
+      "tags": [
+        "truthfulness",
+        "classification",
+        "routing"
+      ],
+      "examples": [
+        "Verify: The Earth orbits the Sun.",
+        "Use the zero-shot baseline to verify these: ...",
+        "Classify these statements with labels [true, false]: ..."
+      ]
+    },
+    {
+      "id": "explain_verdicts",
+      "name": "Verify + explain reasoning",
+      "description": "Delegates to the explainer sub-agent when the user asks WHY a statement is true or false, or asks to justify a verdict.",
+      "tags": [
+        "explanation",
+        "reasoning",
+        "routing"
+      ],
+      "examples": [
+        "Explain why The Great Wall is visible from space with the naked eye is false.",
+        "Justify each verdict: ...",
+        "What makes these statements true or false?"
+      ]
+    },
+    {
+      "id": "fine_tuning_status",
+      "name": "Report fine-tuning status",
+      "description": "Delegates to fine_tuned_predictor to poll the latest SFT job and report state / endpoint freshness.",
+      "tags": [
+        "fine-tuning",
+        "status",
+        "routing"
+      ],
+      "examples": [
+        "Is the fine-tuned model ready?",
+        "What is the fine-tuning status?"
+      ]
+    },
+    {
+      "id": "compare_predictors",
+      "name": "Compare zero-shot vs fine-tuned",
+      "description": "Calls both sub-agents on the same batch and returns side-by-side results.",
+      "tags": [
+        "comparison",
+        "evaluation"
+      ],
+      "examples": [
+        "Compare both predictors on these statements: ...",
+        "Show me zero-shot vs fine-tuned predictions for ..."
+      ]
+    }
+  ],
+  "url": "https://placeholder.invalid/a2a"
+}

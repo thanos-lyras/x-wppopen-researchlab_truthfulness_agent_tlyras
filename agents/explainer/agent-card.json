@@ -1,0 +1,49 @@
+{
+  "protocolVersion": "0.3.0",
+  "name": "explainer",
+  "description": "Classifies political statements as True or False AND produces a short natural-language explanation for each verdict, in a single tool call. The underlying predictor (zero-shot by default, fine-tuned on request) drives the verdict; an independent free-form model articulates why. If ground-truth labels are supplied alongside the statements, also returns headline classification metrics (accuracy, precision, recall, f1, confusion matrix).",
+  "version": "1.0.0",
+  "preferredTransport": "HTTP+JSON",
+  "defaultInputModes": [
+    "application/json",
+    "text/plain"
+  ],
+  "defaultOutputModes": [
+    "application/json",
+    "text/plain"
+  ],
+  "capabilities": {},
+  "skills": [
+    {
+      "id": "classify_and_explain",
+      "name": "Classify statements + explain each verdict",
+      "description": "Calls the predict tool (zero-shot or fine-tuned via use_fine_tuned flag) to get verdicts, then asks an independent explainer model for a 2-3 sentence justification of each. Returns per-statement {prediction, explanation}.",
+      "tags": [
+        "truthfulness",
+        "explanation",
+        "classification",
+        "reasoning"
+      ],
+      "examples": [
+        "Explain why these are true or false: ...",
+        "Why is 'The Great Wall is visible from space with the naked eye' false?",
+        "Classify and justify these statements: ..."
+      ]
+    },
+    {
+      "id": "evaluate_predictions_with_explanations",
+      "name": "Evaluate predictions + return explanations",
+      "description": "Same as classify_and_explain, but when ground-truth labels are provided, also returns headline classification metrics on the underlying predictions.",
+      "tags": [
+        "evaluation",
+        "metrics",
+        "explanation"
+      ],
+      "examples": [
+        "Explain these with labels [true, false]: ...",
+        "Score and explain this prediction set."
+      ]
+    }
+  ],
+  "url": "https://placeholder.invalid/a2a"
+}

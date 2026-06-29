@@ -19,6 +19,13 @@ from google.adk.agents.remote_a2a_agent import (
 
 _PORT = os.environ.get("EXPLAINER_A2A_PORT", "8003")
 _HOST = os.environ.get("EXPLAINER_A2A_HOST", "localhost")
+# In unified deployment (`make deploy-unified`), the unified app automatically
+# sets EXPLAINER_A2A_URL to point to its loopback port. Prefer it when set;
+# fall back to localhost for `make dev`.
+_AGENT_CARD = (
+    os.environ.get("EXPLAINER_A2A_URL")
+    or f"http://{_HOST}:{_PORT}{AGENT_CARD_WELL_KNOWN_PATH}"
+)
 
 explainer_remote_agent = RemoteA2aAgent(
     name="explainer",
@@ -31,6 +38,6 @@ explainer_remote_agent = RemoteA2aAgent(
         "returns headline classification metrics (accuracy, precision, recall, "
         "f1, confusion matrix)."
     ),
-    agent_card=f"http://{_HOST}:{_PORT}{AGENT_CARD_WELL_KNOWN_PATH}",
+    agent_card=_AGENT_CARD,
     use_legacy=False,
 )
