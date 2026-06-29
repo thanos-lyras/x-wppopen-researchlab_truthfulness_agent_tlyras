@@ -1,6 +1,9 @@
 SHELL := /bin/bash
 UV := uv
 ENV_FILE := .env
+TF_DIR := terraform
+
+.PHONY: deploy destroy
 
 # Create .env from .env.example if it's missing
 configure:
@@ -73,33 +76,18 @@ run-mcp:
 	echo "▶ MCP tool server on port $$MCP_SERVER_PORT (endpoint /mcp)"; \
 	PYTHONPATH=. $(UV) run --env-file $(ENV_FILE) uvicorn mcp_server.server:app --host 0.0.0.0 --port $$MCP_SERVER_PORT --reload
 
-# Deploy the MCP server to Cloud Run via three sub-steps:
-#   1. Ensure the Artifact Registry repo exists.
-#   2. Build the image from Dockerfile.mcp via Cloud Build (using cloudbuild.yaml).
-#   3. Deploy the built image to Cloud Run with --no-allow-unauthenticated (callers
-#      must present a bearer token), passing runtime env vars from .env.
-# Captures the resulting HTTPS URL and writes MCP_SERVER_URL=<url>/mcp into .env so
-# subsequent agent deploys can resolve it.
-deploy-mcp:
-	@set -a; . $(ENV_FILE); set +a; \
-	REPO=cloud-run-source-deploy; \
-	IMAGE="$$GOOGLE_CLOUD_LOCATION-docker.pkg.dev/$$GOOGLE_CLOUD_PROJECT/$$REPO/truthfulness-mcp:latest"; \
-	echo "▶ Ensuring Artifact Registry repo $$REPO exists in $$GOOGLE_CLOUD_LOCATION..."; \
-	gcloud artifacts repositories describe $$REPO --location=$$GOOGLE_CLOUD_LOCATION --project=$$GOOGLE_CLOUD_PROJECT > /dev/null 2>&1 || \
-	  gcloud artifacts repositories create $$REPO --repository-format=docker --location=$$GOOGLE_CLOUD_LOCATION --project=$$GOOGLE_CLOUD_PROJECT; \
-	echo "▶ Building $$IMAGE via Cloud Build (Dockerfile.mcp)..."; \
-	gcloud builds submit --project=$$GOOGLE_CLOUD_PROJECT --config cloudbuild.yaml --substitutions _IMAGE_TAG=$$IMAGE . && \
-	echo "▶ Deploying to Cloud Run in $$GOOGLE_CLOUD_LOCATION..." && \
-	URL=$$(gcloud run deploy truthfulness-mcp \
-	    --image "$$IMAGE" \
-	    --region "$$GOOGLE_CLOUD_LOCATION" \
-	    --project "$$GOOGLE_CLOUD_PROJECT" \
-	    --no-allow-unauthenticated \
-	    --set-env-vars "GOOGLE_CLOUD_PROJECT=$$GOOGLE_CLOUD_PROJECT,GOOGLE_CLOUD_LOCATION=$$GOOGLE_CLOUD_LOCATION,GOOGLE_GENAI_USE_VERTEXAI=True,ZERO_SHOT_MODEL=$$ZERO_SHOT_MODEL,EXPLAINER_MODEL=$$EXPLAINER_MODEL,GCS_BUCKET=$$GCS_BUCKET,FINE_TUNED_BASE_MODEL=$$FINE_TUNED_BASE_MODEL,FINE_TUNED_EPOCHS=$$FINE_TUNED_EPOCHS,FINE_TUNED_ADAPTER_SIZE=$$FINE_TUNED_ADAPTER_SIZE,FINE_TUNED_LRM=$$FINE_TUNED_LRM,FINE_TUNED_MODEL=$$FINE_TUNED_MODEL,LAST_TUNING_JOB=$$LAST_TUNING_JOB" \
-	    --format='value(status.url)') && \
-	echo "✅ Deployed: $$URL" && \
-	$(UV) run python -c "from dotenv import set_key; set_key('.env', 'MCP_SERVER_URL', '$$URL/mcp/', quote_mode='never')" && \
-	echo "✅ Wrote MCP_SERVER_URL=$$URL/mcp/ to .env"
+
+# Deploy the unified truthfulness stack (MCP + 4 Agents) to Cloud Run.
+# Terraform owns the whole flow now: a null_resource calls terraform/build_image.sh
+# to build + push the container before creating/updating the Cloud Run service.
+# This target just runs terraform apply and writes the resulting URL to .env.
+deploy:
+	@terraform -chdir=$(TF_DIR) init -input=false
+	@terraform -chdir=$(TF_DIR) apply -auto-approve
+	@URL=$$(terraform -chdir=$(TF_DIR) output -raw service_url); \
+	$(UV) run python -c "from dotenv import set_key; set_key('$(ENV_FILE)', 'UNIFIED_APP_URL', '$$URL', quote_mode='never')"; \
+	echo "✅ $$URL"
+
 
 # Smoke-test the predict_fine_tuned_truthfulness MCP tool end-to-end.
 # Requires `make run-mcp` running in another terminal.
@@ -107,9 +95,13 @@ deploy-mcp:
 test-fine-tuned:
 	PYTHONPATH=. $(UV) run --env-file $(ENV_FILE) python -m scripts.test_predict_fine_tuned
 
-# Per-agent shorthand wrappers so `make dev`/`make dev-no-ui` can spin up
-# A2A backends in parallel (Make can't invoke the same target twice with
-# different args inside one -j run).
+# Hit each of the 4 MCP tools on the deployed Cloud Run service in sequence.
+# Reads UNIFIED_APP_URL from .env, fetches a fresh gcloud identity token.
+test-deployed-mcp:
+	@bash scripts/test_deployed_mcp.sh
+
+# Per-agent shorthand wrappers so `make dev` can spin up all three A2A backends in parallel
+# (Make can't invoke the same target twice with different args inside one -j run).
 run-a2a-zero-shot:
 	$(MAKE) run-a2a NAME=zero_shot
 run-a2a-fine-tuned:
@@ -128,11 +120,10 @@ run-a2a-orchestrator:
 dev:
 	$(MAKE) -j 5 run-mcp run-a2a-zero-shot run-a2a-fine-tuned run-a2a-explainer run-web
 
-# Same as `dev` but no browser UI — orchestrator A2A on :8000 takes the slot
-# instead, so you can curl the orchestrator directly:
-#   curl -sS -X POST http://localhost:8000/ ...
-dev-no-ui:
-	$(MAKE) -j 5 run-mcp run-a2a-zero-shot run-a2a-fine-tuned run-a2a-explainer run-a2a-orchestrator
+# Tear down the Cloud Run service + IAM binding (leaves the Artifact Registry
+# repo and built images intact — `gcloud artifacts repositories delete` for those).
+destroy:
+	terraform -chdir=$(TF_DIR) destroy -auto-approve -var=image=unused
 
 # Cleanup the venv and Python caches
 clean:

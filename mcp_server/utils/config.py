@@ -4,10 +4,7 @@ import os
 from pathlib import Path
 
 # Paths
-DATA_CSV = Path(os.environ.get(
-    "TRUTHFULNESS_CSV",
-    "/Users/thanos.lyras/Desktop/Satalia-projects/internal/data science challenge with agents/data.csv",
-))
+DATA_CSV = Path(os.environ.get("TRUTHFULNESS_CSV", "data/data.csv"))
 SPLITS_DIR = Path("data/splits")
 
 # Split
@@ -39,14 +36,12 @@ LRM           = float(os.environ.get("FINE_TUNED_LRM", "1.0"))
 # so `check_finetune_status` can poll it later without the user re-typing the name.
 LAST_TUNING_JOB = os.environ.get("LAST_TUNING_JOB")
 
-# GCP / Vertex
-PROJECT_ID      = os.environ.get("GOOGLE_CLOUD_PROJECT")
-LOCATION        = os.environ.get("GOOGLE_CLOUD_LOCATION", "us-central1")
-GCS_BUCKET      = os.environ.get("GCS_BUCKET")
-# GCS buckets can't use "global" — must be a real region or multi-region.
-GCS_LOCATION    = os.environ.get("GCS_LOCATION", "us-central1")
-# Vertex AI Gemini SFT requires a REGIONAL endpoint ("global" rejects gemini-2.5-flash-lite tuning).
-TUNING_LOCATION = os.environ.get("TUNING_LOCATION", "us-central1")
+# GCP / Vertex — one project + one region for everything (Vertex client, GCS bucket,
+# SFT jobs, tuned endpoint). Must be a real region, NOT "global" — Vertex SFT and
+# GCS bucket creation both reject "global".
+PROJECT_ID = os.environ.get("GOOGLE_CLOUD_PROJECT")
+LOCATION   = os.environ.get("GOOGLE_CLOUD_LOCATION", "us-central1")
+GCS_BUCKET = os.environ.get("GCS_BUCKET")
 
 # Prompt
 SYSTEM_INSTRUCTION = """You are an expert political fact-checker.

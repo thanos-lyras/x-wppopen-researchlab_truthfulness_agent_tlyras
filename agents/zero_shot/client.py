@@ -19,6 +19,13 @@ from google.adk.agents.remote_a2a_agent import (
 
 _PORT = os.environ.get("ZERO_SHOT_A2A_PORT", "8001")
 _HOST = os.environ.get("ZERO_SHOT_A2A_HOST", "localhost")
+# In unified deployment (`make deploy-unified`), the unified app automatically
+# sets ZERO_SHOT_A2A_URL to point to its loopback port. Prefer it when set;
+# fall back to localhost for `make dev`.
+_AGENT_CARD = (
+    os.environ.get("ZERO_SHOT_A2A_URL")
+    or f"http://{_HOST}:{_PORT}{AGENT_CARD_WELL_KNOWN_PATH}"
+)
 
 zero_shot_remote_agent = RemoteA2aAgent(
     name="zero_shot_predictor",
@@ -30,6 +37,6 @@ zero_shot_remote_agent = RemoteA2aAgent(
         "classification metrics (accuracy, precision, recall, f1, confusion "
         "matrix)."
     ),
-    agent_card=f"http://{_HOST}:{_PORT}{AGENT_CARD_WELL_KNOWN_PATH}",
+    agent_card=_AGENT_CARD,
     use_legacy=False,
 )

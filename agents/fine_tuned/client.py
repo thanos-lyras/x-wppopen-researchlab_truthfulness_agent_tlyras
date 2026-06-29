@@ -19,6 +19,13 @@ from google.adk.agents.remote_a2a_agent import (
 
 _PORT = os.environ.get("FINE_TUNED_A2A_PORT", "8002")
 _HOST = os.environ.get("FINE_TUNED_A2A_HOST", "localhost")
+# In unified deployment (`make deploy-unified`), the unified app automatically
+# sets FINE_TUNED_A2A_URL to point to its loopback port. Prefer it when set;
+# fall back to localhost for `make dev`.
+_AGENT_CARD = (
+    os.environ.get("FINE_TUNED_A2A_URL")
+    or f"http://{_HOST}:{_PORT}{AGENT_CARD_WELL_KNOWN_PATH}"
+)
 
 fine_tuned_remote_agent = RemoteA2aAgent(
     name="fine_tuned_predictor",
@@ -32,6 +39,6 @@ fine_tuned_remote_agent = RemoteA2aAgent(
         "fine-tuning job — current state, whether the tuned endpoint is "
         "ready, and can refresh which endpoint future predictions use."
     ),
-    agent_card=f"http://{_HOST}:{_PORT}{AGENT_CARD_WELL_KNOWN_PATH}",
+    agent_card=_AGENT_CARD,
     use_legacy=False,
 )

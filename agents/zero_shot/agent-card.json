@@ -1,0 +1,49 @@
+{
+  "protocolVersion": "0.3.0",
+  "name": "zero_shot_predictor",
+  "description": "Zero-shot LLM truthfulness classifier. Classifies political statements as True or False using only the LLM's prior knowledge \u2014 no fine-tuning, no retrieval. Processes batches in a single tool call. If ground-truth labels are supplied, also returns headline classification metrics (accuracy, precision, recall, f1, confusion matrix).",
+  "version": "1.0.0",
+  "preferredTransport": "HTTP+JSON",
+  "defaultInputModes": [
+    "application/json",
+    "text/plain"
+  ],
+  "defaultOutputModes": [
+    "application/json",
+    "text/plain"
+  ],
+  "capabilities": {},
+  "skills": [
+    {
+      "id": "classify_truthfulness_zero_shot",
+      "name": "Classify truthfulness (zero-shot)",
+      "description": "Returns True/False per statement using a zero-shot LLM (gemini-2.5-flash by default). Accepts optional speaker / subjects / context metadata to enrich the prompt.",
+      "tags": [
+        "truthfulness",
+        "classification",
+        "zero-shot",
+        "binary"
+      ],
+      "examples": [
+        "Verify: The Earth orbits the Sun.",
+        "Classify these statements as true or false: ...",
+        "Was this statement by [speaker] true: ..."
+      ]
+    },
+    {
+      "id": "evaluate_predictions",
+      "name": "Evaluate predictions against ground truth",
+      "description": "When ground-truth labels are passed alongside statements, returns accuracy, precision, recall, f1, and a confusion matrix in addition to the predictions.",
+      "tags": [
+        "evaluation",
+        "metrics",
+        "binary-classification"
+      ],
+      "examples": [
+        "Verify these with labels [true, false, true]: ...",
+        "Score this prediction set."
+      ]
+    }
+  ],
+  "url": "https://placeholder.invalid/a2a"
+}
