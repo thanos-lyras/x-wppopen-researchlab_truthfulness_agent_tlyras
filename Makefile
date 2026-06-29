@@ -108,6 +108,8 @@ run-a2a-fine-tuned:
 	$(MAKE) run-a2a NAME=fine_tuned
 run-a2a-explainer:
 	$(MAKE) run-a2a NAME=explainer
+run-a2a-orchestrator:
+	$(MAKE) run-a2a NAME=orchestrator
 
 # Parallel dev stack: MCP (:8004) + zero_shot A2A (:8001) + fine_tuned A2A (:8002) +
 # explainer A2A (:8003) + browser playground (:8080).
