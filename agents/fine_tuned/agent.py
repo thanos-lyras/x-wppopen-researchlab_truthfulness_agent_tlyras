@@ -31,7 +31,16 @@ fine_tuned_agent = Agent(
         "use."
     ),
     instruction=FINE_TUNED_INSTRUCTION,
-    model=os.environ.get("FINE_TUNED_AGENT_MODEL", "gemini-2.5-flash"),
+    # Two distinct env vars here:
+    #   FINE_TUNED_MODEL       — the *prediction-endpoint* path (Vertex AI tuned
+    #                            endpoint). Read by the MCP `predict_truthfulness`
+    #                            tool, NOT by this agent.
+    #   FINE_TUNED_AGENT_MODEL — the LLM this wrapping ADK agent uses for tool
+    #                            routing / response formatting. Defaults to flash;
+    #                            override only if you want a different model at
+    #                            the agent layer than at the prediction layer.
+    # `or` (not the dict default) so the fallback handles set-but-empty too.
+    model=os.environ.get("FINE_TUNED_AGENT_MODEL") or "gemini-2.5-flash",
     tools=tools,
 )
 

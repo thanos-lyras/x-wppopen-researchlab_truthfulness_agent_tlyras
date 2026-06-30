@@ -29,7 +29,10 @@ explainer_agent = Agent(
         "metrics (accuracy, precision, recall, f1, confusion matrix)."
     ),
     instruction=EXPLAINER_INSTRUCTION,
-    model=os.environ.get("EXPLAINER_AGENT_MODEL", "gemini-2.5-flash"),
+    # `or` (not the dict default) so the fallback also kicks in when the env
+    # var is set-but-empty — e.g. when `.env` has `EXPLAINER_MODEL=` or the
+    # Cloud Run deploy passes `KEY=$VAR` with VAR unset (shell expands to "").
+    model=os.environ.get("EXPLAINER_MODEL") or "gemini-2.5-flash",
     tools=tools,
 )
 

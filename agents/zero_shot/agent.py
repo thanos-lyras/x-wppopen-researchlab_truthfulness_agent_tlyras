@@ -27,7 +27,10 @@ zero_shot_agent = Agent(
         "confusion matrix) treating True as the positive class."
     ),
     instruction=ZERO_SHOT_INSTRUCTION,
-    model=os.environ.get("ZERO_SHOT_AGENT_MODEL", "gemini-2.5-flash"),
+    # `or` (not the dict default) so the fallback also kicks in when the env
+    # var is set-but-empty — e.g. when `.env` has `ZERO_SHOT_MODEL=` or the
+    # Cloud Run deploy passes `KEY=$VAR` with VAR unset (shell expands to "").
+    model=os.environ.get("ZERO_SHOT_MODEL") or "gemini-2.5-flash",
     tools=tools,
 )
 
