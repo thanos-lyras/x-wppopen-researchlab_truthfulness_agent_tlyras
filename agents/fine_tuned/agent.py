@@ -37,8 +37,18 @@ fine_tuned_agent = Agent(
 
 root_agent = fine_tuned_agent
 
+# `to_a2a()`'s host/port/protocol go into the published agent card — that's the
+# URL remote callers (e.g. the orchestrator's RemoteA2aAgent) will POST to. It
+# is NOT the uvicorn listen address (Cloud Run sets that via $PORT). For local
+# dev the defaults work; in Cloud Run the deploy injects FINE_TUNED_A2A_PUBLIC_HOST
+# / FINE_TUNED_A2A_PROTOCOL / FINE_TUNED_A2A_PUBLIC_PORT so the card advertises
+# the public HTTPS URL instead of `http://0.0.0.0:8002`.
 a2a_app = to_a2a(
     fine_tuned_agent,
-    host="0.0.0.0",
-    port=int(os.environ.get("FINE_TUNED_A2A_PORT", "8002")),
+    host=os.environ.get("FINE_TUNED_A2A_PUBLIC_HOST", "0.0.0.0"),
+    port=int(os.environ.get(
+        "FINE_TUNED_A2A_PUBLIC_PORT",
+        os.environ.get("FINE_TUNED_A2A_PORT", "8002"),
+    )),
+    protocol=os.environ.get("FINE_TUNED_A2A_PROTOCOL", "http"),
 )
