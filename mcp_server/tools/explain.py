@@ -90,3 +90,27 @@ def explain_truthfulness(req: ExplainRequest) -> ExplainResponse:
 
 
 explain_truthfulness_tool = FunctionTool(explain_truthfulness)
+
+
+# ── GCS variant ──────────────────────────────────────────────────────────────
+
+def explain_truthfulness_from_gcs(uri: str, use_fine_tuned: bool | None = None) -> ExplainResponse:
+    """Same as explain_truthfulness, but takes a gs:// URI to a JSON ExplainRequest.
+
+    Downloads the file, validates as ExplainRequest, calls the regular explainer.
+    Use this when the caller (e.g. the orchestrator's /invoke REST handler)
+    has already uploaded the batch to GCS.
+
+    `use_fine_tuned` lets the caller override the predictor selection in the
+    file (True forces fine-tuned verdicts, False forces zero-shot). Default
+    `None` means "use whatever the file says".
+    """
+    from services.gcs_service import GCSService  # local import: keeps services optional in test contexts
+    data = GCSService().download_bytes(uri)
+    req = ExplainRequest.model_validate_json(data)
+    if use_fine_tuned is not None:
+        req.use_fine_tuned = use_fine_tuned
+    return explain_truthfulness(req)
+
+
+explain_truthfulness_from_gcs_tool = FunctionTool(explain_truthfulness_from_gcs)

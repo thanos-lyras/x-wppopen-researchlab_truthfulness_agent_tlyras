@@ -27,6 +27,12 @@ COPY agents/explainer/__init__.py agents/explainer/client.py ./agents/explainer/
 COPY agents/fine_tuned/__init__.py agents/fine_tuned/client.py ./agents/fine_tuned/
 COPY agents/zero_shot/__init__.py agents/zero_shot/client.py ./agents/zero_shot/
 
+# /predict and /explain REST handlers upload the request body to GCS and
+# validate it as a JSON shape — needs the GCSService wrapper and (for future
+# server-side Pydantic validation) the schemas package.
+COPY services/ ./services/
+COPY schemas/ ./schemas/
+
 # Final sync — installs the project itself now that the package code is present.
 RUN uv sync --frozen
 

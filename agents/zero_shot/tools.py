@@ -26,7 +26,7 @@ _MCP_URL = os.environ.get("MCP_SERVER_URL") or f"http://{_MCP_HOST}:{_MCP_PORT}/
 
 mcp_tools = McpToolset(
     connection_params=StreamableHTTPConnectionParams(url=_MCP_URL),
-    tool_filter=["predict_truthfulness"],
+    tool_filter=["predict_truthfulness_from_gcs"],
 )
 
 tools = [mcp_tools]

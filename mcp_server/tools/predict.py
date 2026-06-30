@@ -148,3 +148,33 @@ def predict_truthfulness(req: PredictRequest) -> PredictResponse:
 
 
 predict_truthfulness_tool = FunctionTool(predict_truthfulness)
+
+
+# ── GCS variant ──────────────────────────────────────────────────────────────
+# Reads a JSON PredictRequest from `gs://<bucket>/<path>` and runs the regular
+# predict path. Lets the orchestrator stage large/binary batches in GCS and
+# pass only the URI through A2A — keeps message bodies small and gives every
+# upload a stable, inspectable location.
+
+def predict_truthfulness_from_gcs(uri: str, use_fine_tuned: bool | None = None) -> PredictResponse:
+    """Same as predict_truthfulness, but takes a gs:// URI to a JSON PredictRequest.
+
+    Downloads the file, validates as PredictRequest, calls the regular predictor.
+    Use this when the caller (e.g. the orchestrator's /invoke REST handler)
+    has already uploaded the batch to GCS.
+
+    `use_fine_tuned` lets the caller override the value in the file — pass True
+    to force the fine-tuned endpoint, False to force zero-shot. Default `None`
+    means "use whatever the file says" (which itself defaults to zero-shot).
+    Lets the fine-tuned sub-agent's LLM force its own routing regardless of
+    what was in the uploaded JSON.
+    """
+    from services.gcs_service import GCSService  # local import: keeps services optional in test contexts
+    data = GCSService().download_bytes(uri)
+    req = PredictRequest.model_validate_json(data)
+    if use_fine_tuned is not None:
+        req.use_fine_tuned = use_fine_tuned
+    return predict_truthfulness(req)
+
+
+predict_truthfulness_from_gcs_tool = FunctionTool(predict_truthfulness_from_gcs)

@@ -238,6 +238,12 @@ def deploy_orchestrator() -> None:
             "EXPLAINER_A2A_URL": env.get("EXPLAINER_A2A_URL", ""),
             "FINE_TUNED_A2A_URL": env.get("FINE_TUNED_A2A_URL", ""),
             "ZERO_SHOT_A2A_URL": env.get("ZERO_SHOT_A2A_URL", ""),
+            # The /invoke REST handler uploads the request body to GCS via
+            # GCSService(), which reads GCS_BUCKET + GCS_LOCATION from env.
+            # Forward both so the orchestrator container can use the same
+            # bucket the MCP server uses.
+            "GCS_BUCKET": env.get("GCS_BUCKET", ""),
+            "GCS_LOCATION": env.get("GCS_LOCATION", "us-central1"),
             **_public_a2a_env("ORCHESTRATOR", public_host),
         },
     )
