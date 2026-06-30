@@ -1,7 +1,9 @@
 # Cloud Run image for the truthfulness MCP server.
 # Cloud Run injects $PORT (defaults to 8080); uvicorn binds to it.
 #
-# Build + deploy via `make deploy-mcp` (or `gcloud run deploy --source .`).
+# Build + deploy via `make deploy-mcp`. The build context is the repo root
+# (not `mcp_server/`), so the COPY paths below are repo-rooted and the image
+# can pull in shared code from `services/` and `schemas/`.
 
 FROM python:3.13-slim
 
@@ -18,6 +20,7 @@ RUN uv sync --frozen --no-install-project
 # are excluded via .gcloudignore so they don't bloat the build context.
 COPY mcp_server/ ./mcp_server/
 COPY services/ ./services/
+COPY schemas/ ./schemas/
 
 # Final sync — installs the project itself now that the package code is present.
 RUN uv sync --frozen

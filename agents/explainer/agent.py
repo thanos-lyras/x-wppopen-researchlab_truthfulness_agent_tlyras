@@ -29,14 +29,27 @@ explainer_agent = Agent(
         "metrics (accuracy, precision, recall, f1, confusion matrix)."
     ),
     instruction=EXPLAINER_INSTRUCTION,
-    model=os.environ.get("EXPLAINER_AGENT_MODEL", "gemini-2.5-flash"),
+    # `or` (not the dict default) so the fallback also kicks in when the env
+    # var is set-but-empty — e.g. when `.env` has `EXPLAINER_MODEL=` or the
+    # Cloud Run deploy passes `KEY=$VAR` with VAR unset (shell expands to "").
+    model=os.environ.get("EXPLAINER_MODEL") or "gemini-2.5-flash",
     tools=tools,
 )
 
 root_agent = explainer_agent
 
+# `to_a2a()`'s host/port/protocol go into the published agent card — that's the
+# URL remote callers (e.g. the orchestrator's RemoteA2aAgent) will POST to. It
+# is NOT the uvicorn listen address (Cloud Run sets that via $PORT). For local
+# dev the defaults work; in Cloud Run the deploy injects EXPLAINER_A2A_PUBLIC_HOST
+# / EXPLAINER_A2A_PROTOCOL / EXPLAINER_A2A_PUBLIC_PORT so the card advertises the
+# public HTTPS URL instead of `http://0.0.0.0:8003`.
 a2a_app = to_a2a(
     explainer_agent,
-    host="0.0.0.0",
-    port=int(os.environ.get("EXPLAINER_A2A_PORT", "8003")),
+    host=os.environ.get("EXPLAINER_A2A_PUBLIC_HOST", "0.0.0.0"),
+    port=int(os.environ.get(
+        "EXPLAINER_A2A_PUBLIC_PORT",
+        os.environ.get("EXPLAINER_A2A_PORT", "8003"),
+    )),
+    protocol=os.environ.get("EXPLAINER_A2A_PROTOCOL", "http"),
 )

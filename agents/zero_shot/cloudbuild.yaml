@@ -1,0 +1,27 @@
+# Cloud Build config for the Zero-shot Predictor agent image.
+#
+# Per-service config + Dockerfile live IN their subdirectory (this one in
+# `agents/zero_shot/`); the build itself still runs from the repo root so the
+# image can COPY repo-rooted paths (`agents/__init__.py`, `agents/zero_shot/`).
+# Invoked by `make deploy-zero-shot`:
+#   gcloud builds submit --config agents/zero_shot/cloudbuild.yaml \
+#     --substitutions _IMAGE_TAG=us-central1-docker.pkg.dev/<project>/cloud-run-source-deploy/truthfulness-zero-shot:latest .
+#
+# The resulting image is pushed to Artifact Registry; `gcloud run deploy --image`
+# then points the Cloud Run service at it.
+
+steps:
+- name: 'gcr.io/cloud-builders/docker'
+  args:
+    - 'build'
+    - '-f'
+    - 'agents/zero_shot/Dockerfile'
+    - '-t'
+    - '${_IMAGE_TAG}'
+    - '.'
+
+images:
+- '${_IMAGE_TAG}'
+
+options:
+  logging: CLOUD_LOGGING_ONLY

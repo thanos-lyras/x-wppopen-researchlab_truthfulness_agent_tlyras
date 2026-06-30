@@ -27,14 +27,27 @@ zero_shot_agent = Agent(
         "confusion matrix) treating True as the positive class."
     ),
     instruction=ZERO_SHOT_INSTRUCTION,
-    model=os.environ.get("ZERO_SHOT_AGENT_MODEL", "gemini-2.5-flash"),
+    # `or` (not the dict default) so the fallback also kicks in when the env
+    # var is set-but-empty — e.g. when `.env` has `ZERO_SHOT_MODEL=` or the
+    # Cloud Run deploy passes `KEY=$VAR` with VAR unset (shell expands to "").
+    model=os.environ.get("ZERO_SHOT_MODEL") or "gemini-2.5-flash",
     tools=tools,
 )
 
 root_agent = zero_shot_agent
 
+# `to_a2a()`'s host/port/protocol go into the published agent card — that's the
+# URL remote callers (e.g. the orchestrator's RemoteA2aAgent) will POST to. It
+# is NOT the uvicorn listen address (Cloud Run sets that via $PORT). For local
+# dev the defaults work; in Cloud Run the deploy injects ZERO_SHOT_A2A_PUBLIC_HOST
+# / ZERO_SHOT_A2A_PROTOCOL / ZERO_SHOT_A2A_PUBLIC_PORT so the card advertises the
+# public HTTPS URL instead of `http://0.0.0.0:8001`.
 a2a_app = to_a2a(
     zero_shot_agent,
-    host="0.0.0.0",
-    port=int(os.environ.get("ZERO_SHOT_A2A_PORT", "8001")),
+    host=os.environ.get("ZERO_SHOT_A2A_PUBLIC_HOST", "0.0.0.0"),
+    port=int(os.environ.get(
+        "ZERO_SHOT_A2A_PUBLIC_PORT",
+        os.environ.get("ZERO_SHOT_A2A_PORT", "8001"),
+    )),
+    protocol=os.environ.get("ZERO_SHOT_A2A_PROTOCOL", "http"),
 )

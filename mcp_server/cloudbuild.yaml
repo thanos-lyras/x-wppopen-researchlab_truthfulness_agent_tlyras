@@ -1,6 +1,9 @@
-# Cloud Build config — explicit so we can use a non-standard Dockerfile name
-# (`Dockerfile.mcp`). Invoked by `make deploy-mcp` via:
-#   gcloud builds submit --config cloudbuild.yaml \
+# Cloud Build config for the MCP server image.
+#
+# Per-service config + Dockerfile live IN their subdirectory (this one in
+# `mcp_server/`); the build itself still runs from the repo root so the image
+# can COPY shared code (`services/`, `schemas/`). Invoked by `make deploy-mcp`:
+#   gcloud builds submit --config mcp_server/cloudbuild.yaml \
 #     --substitutions _IMAGE_TAG=us-central1-docker.pkg.dev/<project>/cloud-run-source-deploy/truthfulness-mcp:latest .
 #
 # The resulting image is pushed to Artifact Registry; `gcloud run deploy --image`
@@ -11,7 +14,7 @@ steps:
   args:
     - 'build'
     - '-f'
-    - 'Dockerfile.mcp'
+    - 'mcp_server/Dockerfile'
     - '-t'
     - '${_IMAGE_TAG}'
     - '.'

@@ -19,6 +19,12 @@ from google.adk.agents.remote_a2a_agent import (
 
 _PORT = os.environ.get("FINE_TUNED_A2A_PORT", "8002")
 _HOST = os.environ.get("FINE_TUNED_A2A_HOST", "localhost")
+# Prefer FINE_TUNED_A2A_URL if set (e.g. the deployed Cloud Run agent-card URL
+# written by `make deploy-fine-tuned`); fall back to localhost for local dev.
+_AGENT_CARD = (
+    os.environ.get("FINE_TUNED_A2A_URL")
+    or f"http://{_HOST}:{_PORT}{AGENT_CARD_WELL_KNOWN_PATH}"
+)
 
 fine_tuned_remote_agent = RemoteA2aAgent(
     name="fine_tuned_predictor",
@@ -32,6 +38,6 @@ fine_tuned_remote_agent = RemoteA2aAgent(
         "fine-tuning job — current state, whether the tuned endpoint is "
         "ready, and can refresh which endpoint future predictions use."
     ),
-    agent_card=f"http://{_HOST}:{_PORT}{AGENT_CARD_WELL_KNOWN_PATH}",
+    agent_card=_AGENT_CARD,
     use_legacy=False,
 )

@@ -26,10 +26,7 @@ README.md
 CLAUDE.md
 Makefile
 
-# Things specific to local agent A2A servers (Cloud Run only hosts MCP).
-agents/
-
-# CLI scripts (run locally; not needed in MCP container).
+# CLI scripts (run locally; not COPY'd by any service Dockerfile).
 scripts/
 
 # Editor noise.

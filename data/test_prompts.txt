@@ -1,0 +1,20 @@
+Default predictor (fine_tuned)
+
+
+Classify: "The Eiffel Tower is in Berlin." and "Water boils at 100°C at sea level."
+Explanation route → explainer
+
+
+Explain whether each of these is true or false: "Goldfish only have a 3-second memory." and "Humans share about 50% of their DNA with bananas."
+Zero-shot baseline
+
+
+Use the zero-shot baseline to classify: "Mount Everest is the tallest mountain on Earth."
+Side-by-side comparison
+
+
+Compare both predictors on: "Lightning never strikes the same place twice." and "The Great Wall of China is visible from the Moon."
+Comparison + explanations
+
+
+Compare zero-shot and fine-tuned with explanations: "Bats are blind." and "An octopus has three hearts."
