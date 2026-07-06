@@ -5,7 +5,7 @@
 # image can COPY repo-rooted paths (`agents/__init__.py`, `agents/explainer/`).
 # Invoked by `make deploy-explainer`:
 #   gcloud builds submit --config agents/explainer/cloudbuild.yaml \
-#     --substitutions _IMAGE_TAG=us-central1-docker.pkg.dev/<project>/cloud-run-source-deploy/truthfulness-explainer:latest .
+#     --substitutions _IMAGE_TAG=europe-west1-docker.pkg.dev/<project>/cloud-run-source-deploy/truthfulness-explainer:latest .
 #
 # The resulting image is pushed to Artifact Registry; `gcloud run deploy --image`
 # then points the Cloud Run service at it.

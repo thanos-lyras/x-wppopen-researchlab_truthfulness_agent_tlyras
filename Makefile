@@ -101,6 +101,74 @@ deploy-orchestrator:
 deploy-all:
 	$(UV) run python deployment/deploy.py all
 
+# One-time (idempotent) bootstrap of the orchestrator in the shared A2A Gateway:
+#   1. Mint the per-agent bearer token in Secret Manager + grant the gateway SA read.
+#   2. Upload the per-agent JSON config to gs://<project>-a2a-gateway-agent-config/agents/.
+# Requires `make deploy-orchestrator` to have run first (so ORCHESTRATOR_A2A_URL is in .env).
+# Prints the fresh token once — copy into the team vault AND paste into .env as
+# A2A_GATEWAY_TRUTHFULNESS_ORCHESTRATOR_BEARER_TOKEN before running `make smoke-orchestrator-gateway`.
+register-orchestrator-gateway:
+	@set -a; source $(ENV_FILE); set +a; \
+	if [ -z "$$GOOGLE_CLOUD_PROJECT" ]; then echo "❌ GOOGLE_CLOUD_PROJECT missing in $(ENV_FILE)"; exit 1; fi; \
+	if [ -z "$$ORCHESTRATOR_A2A_URL" ]; then echo "❌ ORCHESTRATOR_A2A_URL missing — run 'make deploy-orchestrator' first"; exit 1; fi; \
+	UPSTREAM_BASE_URL=$${ORCHESTRATOR_A2A_URL%/.well-known/agent-card.json}; \
+	BUCKET=$${GOOGLE_CLOUD_PROJECT}-a2a-gateway-agent-config; \
+	echo "▶ Minting bearer token in Secret Manager..."; \
+	$(UV) run python scripts/gateway/upsert_gateway_bearer_secret.py \
+		--project $$GOOGLE_CLOUD_PROJECT \
+		--secret-id a2a-gateway-truthfulness-orchestrator-bearer-token \
+		--grant-accessor-service-account a2a-agent-gateway@x-wppai-dataspine-choreo-dev.iam.gserviceaccount.com \
+		--print-token; \
+	echo ""; \
+	echo "▶ Uploading per-agent config to gs://$$BUCKET/agents/truthfulness-orchestrator.json..."; \
+	$(UV) run python scripts/gateway/upsert_gcs_agent_config.py \
+		--project $$GOOGLE_CLOUD_PROJECT \
+		--bucket $$BUCKET \
+		--prefix agents \
+		--agent-id truthfulness-orchestrator \
+		--backend-kind http_jsonrpc \
+		--upstream-base-url $$UPSTREAM_BASE_URL \
+		--name "Truthfulness Orchestrator" \
+		--description "ADK 2.0 orchestrator classifying statements as truthful/untruthful via zero-shot, fine-tuned, and explainer sub-agents." \
+		--monthly-budget-usd 50 \
+		--estimated-cost-per-call-usd 0.05 \
+		--capture-call-content \
+		--capture-call-content-max-chars 4000 \
+		--forward-id-token
+
+# Re-upload the per-agent GCS config WITHOUT rotating the bearer token.
+# Use this when the orchestrator URL changes (e.g. after a region move or
+# service rename) so the gateway learns the new `upstream_base_url` while
+# the existing token in .env keeps working.
+update-orchestrator-gateway-config:
+	@set -a; source $(ENV_FILE); set +a; \
+	if [ -z "$$GOOGLE_CLOUD_PROJECT" ]; then echo "❌ GOOGLE_CLOUD_PROJECT missing in $(ENV_FILE)"; exit 1; fi; \
+	if [ -z "$$ORCHESTRATOR_A2A_URL" ]; then echo "❌ ORCHESTRATOR_A2A_URL missing — run 'make deploy-orchestrator' first"; exit 1; fi; \
+	UPSTREAM_BASE_URL=$${ORCHESTRATOR_A2A_URL%/.well-known/agent-card.json}; \
+	BUCKET=$${GOOGLE_CLOUD_PROJECT}-a2a-gateway-agent-config; \
+	echo "▶ Updating gs://$$BUCKET/agents/truthfulness-orchestrator.json → upstream $$UPSTREAM_BASE_URL"; \
+	$(UV) run python scripts/gateway/upsert_gcs_agent_config.py \
+		--project $$GOOGLE_CLOUD_PROJECT \
+		--bucket $$BUCKET \
+		--prefix agents \
+		--agent-id truthfulness-orchestrator \
+		--backend-kind http_jsonrpc \
+		--upstream-base-url $$UPSTREAM_BASE_URL \
+		--name "Truthfulness Orchestrator" \
+		--description "ADK 2.0 orchestrator classifying statements as truthful/untruthful via zero-shot, fine-tuned, and explainer sub-agents." \
+		--monthly-budget-usd 50 \
+		--estimated-cost-per-call-usd 0.05 \
+		--capture-call-content \
+		--capture-call-content-max-chars 4000 \
+		--forward-id-token
+
+# End-to-end smoke test through the A2A Gateway. Requires:
+#   - `make register-orchestrator-gateway` completed
+#   - A2A_GATEWAY_BASE_URL, A2A_GATEWAY_AGENT_ID,
+#     A2A_GATEWAY_TRUTHFULNESS_ORCHESTRATOR_BEARER_TOKEN, A2A_CALLER_EMAIL set in .env
+smoke-orchestrator-gateway:
+	PYTHONPATH=. $(UV) run --env-file $(ENV_FILE) python scripts/gateway/smoke_orchestrator.py
+
 # Smoke-test the predict_fine_tuned_truthfulness MCP tool end-to-end.
 # Requires `make run-mcp` running in another terminal.
 # When FINE_TUNED_MODEL is unset, the tool falls back to FINE_TUNED_BASE_MODEL.
@@ -127,28 +195,6 @@ run-a2a-orchestrator:
 #     make run-a2a NAME=orchestrator
 dev:
 	$(MAKE) -j 5 run-mcp run-a2a-zero-shot run-a2a-fine-tuned run-a2a-explainer run-web
-
-# Same as `dev` but skips the local MCP — agents resolve tools via the deployed
-# Cloud Run MCP (MCP_SERVER_URL in .env, written by `make deploy-mcp`).
-# Use after `make deploy-mcp` to validate the local agents against the live MCP.
-dev-cloud-mcp:
-	$(MAKE) -j 4 run-a2a-zero-shot run-a2a-fine-tuned run-a2a-explainer run-web
-
-# Like `dev-cloud-mcp` but ALSO skips the local explainer A2A — the orchestrator
-# routes to the deployed explainer (EXPLAINER_A2A_URL in .env, written by
-# `make deploy-explainer`). zero_shot + fine_tuned still run locally; both they
-# and the deployed explainer hit the deployed MCP. Use after `make deploy-mcp`
-# AND `make deploy-explainer` to validate cross-service A2A.
-dev-cloud-mcp-explainer:
-	$(MAKE) -j 3 run-a2a-zero-shot run-a2a-fine-tuned run-web
-
-# Fully cloud: NO local A2A processes — only the browser UI runs locally.
-# The orchestrator (in-process inside `adk web`) routes every sub-agent call
-# to its deployed Cloud Run service via the *_A2A_URL env vars in .env; those
-# services in turn hit the deployed MCP. Use after `make deploy-mcp`,
-# `make deploy-zero-shot`, `make deploy-fine-tuned`, AND `make deploy-explainer`.
-dev-cloud-all:
-	$(MAKE) run-web
 
 # Same as `dev` but no browser UI — orchestrator A2A on :8000 takes the slot
 # instead, so you can curl the orchestrator directly:

@@ -4,7 +4,7 @@ Usage:
     python -m scripts.sync_tuned_model <JOB_RESOURCE_NAME>
 
 JOB_RESOURCE_NAME looks like:
-    projects/<num>/locations/us-central1/tuningJobs/<id>
+    projects/<num>/locations/europe-west1/tuningJobs/<id>
 """
 
 import argparse

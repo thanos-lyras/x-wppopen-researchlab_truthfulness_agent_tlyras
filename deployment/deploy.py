@@ -43,6 +43,13 @@ REPO = "cloud-run-source-deploy"
 # Order matters when deploying "all":
 DEPLOY_ORDER = ["mcp", "zero-shot", "fine-tuned", "explainer", "orchestrator"]
 
+# A2A Agents Gateway service account — granted roles/run.invoker on the
+# orchestrator so the gateway (which mints an ID token per upstream call)
+# can reach the --no-allow-unauthenticated orchestrator.
+GATEWAY_SERVICE_ACCOUNT = (
+    "a2a-agent-gateway@x-wppai-dataspine-choreo-dev.iam.gserviceaccount.com"
+)
+
 
 # ── tiny shell helpers ─────────────────────────────────────────────────
 
@@ -103,21 +110,54 @@ def _build_image(project: str, image: str, cloudbuild_path: str) -> None:
 def _deploy_service(
     *, service_name: str, image: str, project: str, location: str,
     env_vars: dict[str, str],
+    ingress: str = "all",
+    allow_unauthenticated: bool = True,
 ) -> str:
-    """Deploy a Cloud Run service. Returns its public HTTPS URL."""
-    print(f"▶ Deploying {service_name} to Cloud Run in {location}...")
+    """Deploy a Cloud Run service. Returns its public HTTPS URL.
+
+    - `ingress`: "all" (default, publicly reachable) or "internal"
+      (only reachable from other Cloud Run services in the same project).
+    - `allow_unauthenticated`: True adds --allow-unauthenticated (default);
+      False adds --no-allow-unauthenticated (IAM-locked; caller must
+      subsequently be granted `roles/run.invoker`).
+    """
+    print(f"▶ Deploying {service_name} to Cloud Run in {location} "
+          f"(ingress={ingress}, unauth={'allowed' if allow_unauthenticated else 'blocked'})...")
     env_str = ",".join(f"{k}={v}" for k, v in env_vars.items())
+    auth_flag = "--allow-unauthenticated" if allow_unauthenticated else "--no-allow-unauthenticated"
     url = _run_capture([
         "gcloud", "run", "deploy", service_name,
         f"--image={image}",
         f"--region={location}",
         f"--project={project}",
-        "--allow-unauthenticated",
+        auth_flag,
+        f"--ingress={ingress}",
         f"--set-env-vars={env_str}",
+        # Note: gcloud has no --clear-command / --clear-args flags. If a Cloud
+        # Run service inherits a stale `command:` from a prior revision (e.g.
+        # `python -m agents.zero_shot_agent.main`), the Dockerfile's CMD will
+        # be ignored and the container crashes. Fix: `gcloud run services
+        # delete <svc> --region=<r>` once, then re-run this deploy to recreate
+        # cleanly.
         "--format=value(status.url)",
     ]).strip()
     print(f"✅ Deployed: {url}")
     return url
+
+
+def _grant_run_invoker(project: str, location: str, service_name: str, member: str) -> None:
+    """Grant `roles/run.invoker` on a Cloud Run service to a principal.
+
+    Idempotent — gcloud silently succeeds if the binding already exists.
+    """
+    print(f"▶ Granting roles/run.invoker on {service_name} to {member}...")
+    _run_stream([
+        "gcloud", "run", "services", "add-iam-policy-binding", service_name,
+        f"--region={location}",
+        f"--project={project}",
+        f"--member={member}",
+        "--role=roles/run.invoker",
+    ])
 
 
 def _write_env(key: str, value: str) -> None:
@@ -157,6 +197,12 @@ def deploy_mcp() -> None:
     url = _deploy_service(
         service_name="truthfulness-mcp",
         image=image, project=project, location=location,
+        # Public + unauth (TEMPORARY). Cloud-Run-to-Cloud-Run same-project traffic
+        # is NOT classified as internal by default (Google's edge routes .run.app
+        # calls via the public frontend), so --ingress=internal silently 404s the
+        # sub-agents' MCP calls before they reach the container. Proper fix is
+        # --no-allow-unauthenticated + ID-token auth on outbound McpToolset calls
+        # (tracked as follow-up; keep sub-agents/MCP public until then).
         env_vars={
             **_gcp_env(env),
             "ZERO_SHOT_MODEL": env.get("ZERO_SHOT_MODEL", ""),
@@ -193,6 +239,10 @@ def _deploy_subagent(name_kebab: str, *, extra_env: dict[str, str] | None = None
     url = _deploy_service(
         service_name=service_name, image=image,
         project=project, location=location,
+        # Public + unauth (TEMPORARY). Same rationale as deploy_mcp() — same-project
+        # Cloud-Run-to-Cloud-Run over .run.app is not internal by default, so
+        # --ingress=internal silently 404s the orchestrator's A2A calls. Proper fix
+        # is --no-allow-unauthenticated + ID-token auth on RemoteA2aAgent (follow-up).
         env_vars={
             **_gcp_env(env),
             "MCP_SERVER_URL": env.get("MCP_SERVER_URL", ""),
@@ -232,6 +282,12 @@ def deploy_orchestrator() -> None:
     url = _deploy_service(
         service_name=service_name, image=image,
         project=project, location=location,
+        # Ingress stays "all" because the A2A Gateway lives in another region
+        # (europe-west1) and calls this service across regions; that traffic
+        # is NOT classified as internal by Cloud Run's edge.
+        ingress="all",
+        # IAM-locked: only the gateway SA (below) can invoke this service.
+        allow_unauthenticated=False,
         env_vars={
             **_gcp_env(env),
             "ORCHESTRATOR_MODEL": env.get("ORCHESTRATOR_MODEL", ""),
@@ -240,6 +296,13 @@ def deploy_orchestrator() -> None:
             "ZERO_SHOT_A2A_URL": env.get("ZERO_SHOT_A2A_URL", ""),
             **_public_a2a_env("ORCHESTRATOR", public_host),
         },
+    )
+    # Grant the A2A Gateway SA invoker so it can call this locked-down service
+    # with the ID token it mints per request (forward_id_token=true in the
+    # gateway's GCS config). Idempotent — safe on every redeploy.
+    _grant_run_invoker(
+        project, location, service_name,
+        member=f"serviceAccount:{GATEWAY_SERVICE_ACCOUNT}",
     )
     _write_env("ORCHESTRATOR_A2A_URL", f"{url}/.well-known/agent-card.json")
 

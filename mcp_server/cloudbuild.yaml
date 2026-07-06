@@ -4,7 +4,7 @@
 # `mcp_server/`); the build itself still runs from the repo root so the image
 # can COPY shared code (`services/`, `schemas/`). Invoked by `make deploy-mcp`:
 #   gcloud builds submit --config mcp_server/cloudbuild.yaml \
-#     --substitutions _IMAGE_TAG=us-central1-docker.pkg.dev/<project>/cloud-run-source-deploy/truthfulness-mcp:latest .
+#     --substitutions _IMAGE_TAG=europe-west1-docker.pkg.dev/<project>/cloud-run-source-deploy/truthfulness-mcp:latest .
 #
 # The resulting image is pushed to Artifact Registry; `gcloud run deploy --image`
 # then points the Cloud Run service at it.
