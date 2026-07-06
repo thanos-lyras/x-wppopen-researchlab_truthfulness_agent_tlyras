@@ -41,12 +41,12 @@ LAST_TUNING_JOB = os.environ.get("LAST_TUNING_JOB")
 
 # GCP / Vertex
 PROJECT_ID      = os.environ.get("GOOGLE_CLOUD_PROJECT")
-LOCATION        = os.environ.get("GOOGLE_CLOUD_LOCATION", "us-central1")
+LOCATION        = os.environ.get("GOOGLE_CLOUD_LOCATION", "europe-west1")
 GCS_BUCKET      = os.environ.get("GCS_BUCKET")
 # GCS buckets can't use "global" — must be a real region or multi-region.
-GCS_LOCATION    = os.environ.get("GCS_LOCATION", "us-central1")
+GCS_LOCATION    = os.environ.get("GCS_LOCATION", "europe-west1")
 # Vertex AI Gemini SFT requires a REGIONAL endpoint ("global" rejects gemini-2.5-flash-lite tuning).
-TUNING_LOCATION = os.environ.get("TUNING_LOCATION", "us-central1")
+TUNING_LOCATION = os.environ.get("TUNING_LOCATION", "europe-west1")
 
 # Prompt
 SYSTEM_INSTRUCTION = """You are an expert political fact-checker.
