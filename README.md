@@ -173,7 +173,7 @@ After each deploy, the resulting URL is auto-written back to `.env` (`MCP_SERVER
 - **Orchestrator discovers sub-agents** — each `client.py` reads `<NAME>_A2A_URL` (deployed agent card URL) or falls back to localhost.
 - **Each agent publishes its public URL in its agent card** — the deploy target injects `<NAME>_A2A_PUBLIC_HOST` / `_PROTOCOL` / `_PUBLIC_PORT` so `to_a2a()` advertises the public HTTPS URL instead of `http://0.0.0.0:<port>`.
 
-All services deploy with `--allow-unauthenticated`. To lock down, flip to `--no-allow-unauthenticated` per target and grant `roles/run.invoker` to the calling SA on each downstream service.
+**Security posture is documented separately** — see [Security](#security) below. Deploy defaults enforce it: MCP + the three sub-agents get `--ingress=internal` + VPC egress; the orchestrator gets `--no-allow-unauthenticated` with the A2A Gateway service account granted `roles/run.invoker`.
 
 ### Calling the deployed orchestrator
 
@@ -202,6 +202,175 @@ Each agent reads its model from a `<NAME>_MODEL` env var with a `gemini-2.5-flas
 | `FINE_TUNED_BASE_MODEL`  | MCP `predict_truthfulness` tool, as fallback | Used when `FINE_TUNED_MODEL` is empty (e.g. before first SFT job) |
 
 The two-layer split exists because the `fine_tuned` agent's wrapping LLM (routing) is conceptually distinct from the prediction endpoint it calls. For `zero_shot` and `explainer`, both layers use the same model, so a single env var is enough.
+
+## Security
+
+The deployed system enforces defense-in-depth on every hop. This section describes the full posture — what protects what, how requests actually flow, and how to bootstrap or verify the setup.
+
+### Threat model
+
+- **External callers** must authenticate with a static bearer token before their request can reach the orchestrator.
+- **MCP + the three sub-agents** are not reachable from the public internet at all (silent 404 at Cloud Run's edge).
+- **Only the orchestrator's Cloud Run service** can reach the sub-agents; only the sub-agents (and the orchestrator) can reach MCP.
+- **Vertex AI + GCS + Secret Manager calls** stay on Google's private backbone (no traffic egresses the VPC).
+
+### Request flow (bottom to top)
+
+```
+external caller  ──Authorization: Bearer <token> + X-A2A-Caller: <email>──▶  A2A Gateway (shared, europe-west1)
+                                                                                    │
+                                                            gateway validates bearer against Secret Manager
+                                                            gateway mints Google ID token for orchestrator SA
+                                                                                    ▼
+                                                         orchestrator  (ingress=all, --no-allow-unauthenticated)
+                                                            IAM check: gateway SA has roles/run.invoker ✓
+                                                                                    │
+                                                          orchestrator's outbound routed via default VPC
+                                                                                    ▼
+                                                       sub-agent  (ingress=internal, allow-unauthenticated)
+                                                            edge check: arrived via VPC ✓
+                                                                                    │
+                                                            sub-agent's outbound routed via default VPC
+                                                                                    ▼
+                                                            MCP  (ingress=internal, allow-unauthenticated)
+                                                            edge check: arrived via VPC ✓
+                                                                                    │
+                                                            MCP calls Vertex AI via Private Google Access
+```
+
+### Layer 1 — External access via the A2A Gateway
+
+The orchestrator is fronted by the shared **A2A Agents Gateway** (`https://a2a-agent-gateway-eu-fq5fpdmt7a-ew.a.run.app`, owned by another research team, one instance for the whole org).
+
+Callers hit `POST /agents/truthfulness-orchestrator/` with:
+
+```
+Authorization: Bearer <bearer-token>
+X-A2A-Caller:  <caller@satalia.com>
+Content-Type:  application/json
+
+<A2A JSON-RPC body>
+```
+
+The gateway:
+
+1. Validates the bearer against Secret Manager (`a2a-gateway-truthfulness-orchestrator-bearer-token`).
+2. Enforces rate limit (10 rps per token) and monthly budget ($50/mo, $0.05/call configured).
+3. Because our config has `forward_id_token: true`, mints a fresh short-lived Google ID token as its own SA (`a2a-agent-gateway@x-wppai-dataspine-choreo-dev.iam.gserviceaccount.com`).
+4. Forwards to `https://truthfulness-orchestrator-<projnum>.europe-west1.run.app/` with the ID token in the `Authorization` header.
+
+Bearer tokens live only in Secret Manager. They are never in `git`, in the gateway's GCS config, or in any deploy script. Values are handed to callers out-of-band (team vault, encrypted channel).
+
+### Layer 2 — Orchestrator: IAM-locked Cloud Run
+
+The orchestrator deploys with `--ingress=all --no-allow-unauthenticated`. Cloud Run's IAM edge rejects any request without a valid Google ID token whose identity has `roles/run.invoker` on this service. The only principal granted that role is the gateway's SA — no one else can invoke the orchestrator, not even from inside the project via curl.
+
+Verification: direct curl to `https://truthfulness-orchestrator-<projnum>.europe-west1.run.app/.well-known/agent-card.json` from a laptop returns **403**.
+
+### Layer 3 — Sub-agents + MCP: `--ingress=internal` + VPC egress
+
+MCP and the three sub-agents deploy with `--ingress=internal`. Cloud Run's ingress edge only accepts requests that **arrive via a VPC network**, not the public frontend. That rules out any laptop, any external caller, and any Cloud Run service that isn't configured to route through the VPC.
+
+To make the orchestrator → sub-agent and sub-agent → MCP hops actually reach their destinations, every calling Cloud Run service also deploys with:
+
+```
+--network=default --subnet=default --vpc-egress=all-traffic
+```
+
+`--vpc-egress=all-traffic` routes ALL outbound HTTPS from that service through the default VPC. That means calls to sibling Cloud Run services (which are what we want protected) go over the private network — matching what the destination's `--ingress=internal` filter allows through.
+
+Verification: direct curl from a laptop to any of `truthfulness-mcp`, `truthfulness-zero-shot`, `truthfulness-fine-tuned`, `truthfulness-explainer` on their `.run.app` URLs returns **404** — the request is dropped at Cloud Run's edge before ever hitting the container. There are no destination-side logs.
+
+### Private Google Access (PGA)
+
+Because every service routes ALL outbound traffic through the VPC (including Vertex AI, GCS, and Secret Manager calls), the VPC subnet must have Private Google Access enabled — otherwise those calls to `*.googleapis.com` would fail (they resolve to public IPs which aren't in the VPC's private range).
+
+Enable once, per subnet you use (default subnet in `europe-west1` for this project):
+
+```
+gcloud compute networks subnets update default \
+  --region=europe-west1 --project=x-wppai-dataspine-choreo-dev \
+  --enable-private-ip-google-access
+```
+
+Verify:
+
+```
+gcloud compute networks subnets describe default \
+  --region=europe-west1 --project=x-wppai-dataspine-choreo-dev \
+  --format='value(privateIpGoogleAccess)'
+# expected: True
+```
+
+If PGA is off, every Vertex/GCS/Secret Manager call from every service breaks silently in the same way `--ingress=internal` breaks direct HTTPS — no error logs, requests just never leave the VPC. Do not disable PGA without also removing `--vpc-egress=all-traffic` from `deployment/deploy.py`.
+
+### Bootstrap the security posture from scratch
+
+One-time, per environment:
+
+```
+# 1. Enable Private Google Access on the default subnet.
+gcloud compute networks subnets update default \
+  --region=europe-west1 --project=x-wppai-dataspine-choreo-dev \
+  --enable-private-ip-google-access
+
+# 2. Deploy all 5 services (each picks up its ingress + vpc_egress from deployment/deploy.py).
+make deploy-all
+
+# 3. Register the orchestrator with the shared A2A Gateway.
+#    Mints a bearer token in Secret Manager, grants gateway SA `secretAccessor`,
+#    uploads the per-agent GCS config with forward_id_token=true.
+make register-orchestrator-gateway
+# — capture the printed bearer token, put it in the team vault, and paste into .env
+#    as A2A_GATEWAY_TRUTHFULNESS_ORCHESTRATOR_BEARER_TOKEN
+
+# 4. Populate .env with the four gateway vars:
+#    A2A_GATEWAY_BASE_URL, A2A_GATEWAY_AGENT_ID, ..._BEARER_TOKEN, A2A_CALLER_EMAIL
+
+# 5. Smoke test end-to-end through the gateway.
+make smoke-orchestrator-gateway
+```
+
+### Verify the posture at any time
+
+```
+# Full-chain smoke — should return a real verdict.
+make smoke-orchestrator-gateway
+
+# From a laptop: all four sub-agent/MCP URLs should 404, orchestrator should 403.
+PROJNUM=$(gcloud projects describe x-wppai-dataspine-choreo-dev --format='value(projectNumber)')
+for svc in mcp zero-shot fine-tuned explainer; do
+  echo "$svc: $(curl -sS -o /dev/null -w '%{http_code}' https://truthfulness-$svc-$PROJNUM.europe-west1.run.app/)"
+done
+echo "orchestrator: $(curl -sS -o /dev/null -w '%{http_code}' https://truthfulness-orchestrator-$PROJNUM.europe-west1.run.app/.well-known/agent-card.json)"
+# expected: mcp 404, zero-shot 404, fine-tuned 404, explainer 404, orchestrator 403
+```
+
+If any URL returns 200 to a laptop, something has regressed. Common causes: someone flipped a service back to `--ingress=all`, PGA got disabled, or a new service was added without `--vpc-egress=all-traffic`.
+
+### Updating the orchestrator URL in the gateway
+
+When the orchestrator's URL changes (region migration, service rename), re-upload the gateway's GCS config so it points at the new upstream — this does NOT rotate the bearer token:
+
+```
+make update-orchestrator-gateway-config
+```
+
+Wait ~60s for the gateway's config cache to refresh (or click "Rescan config + usage" in the gateway's `/monitoring` UI), then re-smoke.
+
+### Rotating the bearer token
+
+Re-run the register target — it adds a new secret version and prints the new value. Old versions stay valid until manually disabled in Secret Manager. Paste the new token into your vault + `.env`, then old callers must be updated to use it.
+
+```
+make register-orchestrator-gateway   # prints new token; old callers keep working until versions are disabled
+```
+
+### What we deliberately did NOT do (and why)
+
+- **We did NOT switch to `--no-allow-unauthenticated` + Google ID tokens on sub-agents/MCP.** That would work too and is Google's other recommended pattern (identity-based auth per hop instead of network-based). We chose ingress+VPC because it required zero application code changes — just deploy-script flags. If we later want per-caller audit trails (which SA called which sub-agent), or if this project grows to multi-project setups where VPC routing gets complex, switching to ID-token auth is the natural upgrade path.
+- **We did NOT provision a dedicated VPC.** The default VPC works fine for a same-project setup. A dedicated VPC would add operational complexity without meaningfully better isolation for our threat model.
+- **We did NOT add a Serverless VPC Access connector.** Direct VPC Egress is the modern replacement — no per-instance connector infra to maintain, no per-hour connector billing.
 
 ## Label mapping
 

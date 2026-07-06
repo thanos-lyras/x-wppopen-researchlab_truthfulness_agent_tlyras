@@ -112,20 +112,29 @@ def _deploy_service(
     env_vars: dict[str, str],
     ingress: str = "all",
     allow_unauthenticated: bool = True,
+    vpc_egress: str | None = None,
 ) -> str:
     """Deploy a Cloud Run service. Returns its public HTTPS URL.
 
     - `ingress`: "all" (default, publicly reachable) or "internal"
-      (only reachable from other Cloud Run services in the same project).
+      (only reachable from callers whose outbound traffic ROUTES THROUGH a
+      VPC in the same project — requires vpc_egress on the caller, see below).
     - `allow_unauthenticated`: True adds --allow-unauthenticated (default);
       False adds --no-allow-unauthenticated (IAM-locked; caller must
       subsequently be granted `roles/run.invoker`).
+    - `vpc_egress`: when set (e.g. "all-traffic"), routes the service's
+      outbound traffic through the default VPC in `location`. Required on
+      any service that CALLS a --ingress=internal destination in the same
+      project. Requires Private Google Access enabled on the default subnet
+      (one-time: `gcloud compute networks subnets update default
+      --region=<r> --enable-private-ip-google-access`).
     """
     print(f"▶ Deploying {service_name} to Cloud Run in {location} "
-          f"(ingress={ingress}, unauth={'allowed' if allow_unauthenticated else 'blocked'})...")
+          f"(ingress={ingress}, unauth={'allowed' if allow_unauthenticated else 'blocked'}, "
+          f"vpc_egress={vpc_egress or 'off'})...")
     env_str = ",".join(f"{k}={v}" for k, v in env_vars.items())
     auth_flag = "--allow-unauthenticated" if allow_unauthenticated else "--no-allow-unauthenticated"
-    url = _run_capture([
+    cmd = [
         "gcloud", "run", "deploy", service_name,
         f"--image={image}",
         f"--region={location}",
@@ -140,7 +149,14 @@ def _deploy_service(
         # delete <svc> --region=<r>` once, then re-run this deploy to recreate
         # cleanly.
         "--format=value(status.url)",
-    ]).strip()
+    ]
+    if vpc_egress is not None:
+        cmd[-1:-1] = [
+            "--network=default",
+            "--subnet=default",
+            f"--vpc-egress={vpc_egress}",
+        ]
+    url = _run_capture(cmd).strip()
     print(f"✅ Deployed: {url}")
     return url
 
@@ -197,12 +213,12 @@ def deploy_mcp() -> None:
     url = _deploy_service(
         service_name="truthfulness-mcp",
         image=image, project=project, location=location,
-        # Public + unauth (TEMPORARY). Cloud-Run-to-Cloud-Run same-project traffic
-        # is NOT classified as internal by default (Google's edge routes .run.app
-        # calls via the public frontend), so --ingress=internal silently 404s the
-        # sub-agents' MCP calls before they reach the container. Proper fix is
-        # --no-allow-unauthenticated + ID-token auth on outbound McpToolset calls
-        # (tracked as follow-up; keep sub-agents/MCP public until then).
+        # ingress=internal: MCP is only reachable via the default VPC. Every
+        # caller (the three sub-agents) must therefore run with vpc_egress set —
+        # done in _deploy_subagent() below. External laptops hitting the .run.app
+        # URL get a silent 404 at Cloud Run's edge.
+        ingress="internal",
+        vpc_egress="all-traffic",
         env_vars={
             **_gcp_env(env),
             "ZERO_SHOT_MODEL": env.get("ZERO_SHOT_MODEL", ""),
@@ -239,10 +255,11 @@ def _deploy_subagent(name_kebab: str, *, extra_env: dict[str, str] | None = None
     url = _deploy_service(
         service_name=service_name, image=image,
         project=project, location=location,
-        # Public + unauth (TEMPORARY). Same rationale as deploy_mcp() — same-project
-        # Cloud-Run-to-Cloud-Run over .run.app is not internal by default, so
-        # --ingress=internal silently 404s the orchestrator's A2A calls. Proper fix
-        # is --no-allow-unauthenticated + ID-token auth on RemoteA2aAgent (follow-up).
+        # ingress=internal: sub-agent is only reachable from the orchestrator over
+        # the default VPC. Sub-agent itself also has vpc_egress so it can reach
+        # the ingress=internal MCP. External laptops get 404 at the edge.
+        ingress="internal",
+        vpc_egress="all-traffic",
         env_vars={
             **_gcp_env(env),
             "MCP_SERVER_URL": env.get("MCP_SERVER_URL", ""),
@@ -282,12 +299,17 @@ def deploy_orchestrator() -> None:
     url = _deploy_service(
         service_name=service_name, image=image,
         project=project, location=location,
-        # Ingress stays "all" because the A2A Gateway lives in another region
-        # (europe-west1) and calls this service across regions; that traffic
-        # is NOT classified as internal by Cloud Run's edge.
+        # Ingress stays "all" because the A2A Gateway lives in a different
+        # project's edge context; that traffic isn't classified as internal
+        # to our VPC. IAM (--no-allow-unauthenticated + gateway SA has
+        # run.invoker) is what enforces auth here.
         ingress="all",
-        # IAM-locked: only the gateway SA (below) can invoke this service.
         allow_unauthenticated=False,
+        # vpc_egress: the orchestrator must route through our VPC on outbound
+        # calls to the (now ingress=internal) sub-agents. Also fine for all its
+        # other Google API calls (Vertex, GCS) because Private Google Access is
+        # enabled on the default subnet.
+        vpc_egress="all-traffic",
         env_vars={
             **_gcp_env(env),
             "ORCHESTRATOR_MODEL": env.get("ORCHESTRATOR_MODEL", ""),
