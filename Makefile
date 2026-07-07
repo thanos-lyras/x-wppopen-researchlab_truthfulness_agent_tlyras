@@ -11,7 +11,7 @@ ENV_FILE := .env
         dev dev-no-ui \
         deploy-mcp deploy-zero-shot deploy-fine-tuned deploy-explainer deploy-orchestrator deploy-all \
         tf-init tf-plan tf-apply tf-destroy \
-        register-orchestrator-gateway update-orchestrator-gateway-config smoke-orchestrator-gateway \
+        register-orchestrator-gateway update-orchestrator-gateway-config smoke-orchestrator-gateway rotate-orchestrator-gateway-token \
         ask test-ask test-ask-inline test-ask-file test-ask-uri test-ask-agent-hint test-ask-raw \
         clean
 
@@ -45,9 +45,10 @@ help:
 	@echo "  tf-destroy                           terraform destroy (does NOT undeploy Cloud Run services created by deploy.py)"
 	@echo ""
 	@echo "Gateway integration (see README § Security):"
-	@echo "  register-orchestrator-gateway        one-time: mint bearer + upload config"
-	@echo "  update-orchestrator-gateway-config   re-upload config without rotating token"
+	@echo "  register-orchestrator-gateway        idempotent: reuse existing bearer if present else mint, upload config, write .env"
+	@echo "  update-orchestrator-gateway-config   re-upload config without touching the token"
 	@echo "  smoke-orchestrator-gateway           end-to-end smoke via gateway"
+	@echo "  rotate-orchestrator-gateway-token    explicit rotation: mints a NEW bearer (breaks existing callers)"
 	@echo ""
 	@echo "Ask the deployed system (see main.py --help for all options):"
 	@echo "  ask PROMPT=\"<text>\"                   inline prompt, no file"
@@ -188,6 +189,7 @@ tf-destroy: ; cd terraform && terraform destroy
 register-orchestrator-gateway:        ; PYTHONPATH=. $(UV) run python deployment/deploy.py register-gateway
 update-orchestrator-gateway-config:   ; PYTHONPATH=. $(UV) run python deployment/deploy.py update-gateway-config
 smoke-orchestrator-gateway:           ; PYTHONPATH=. $(UV) run python deployment/deploy.py smoke-gateway
+rotate-orchestrator-gateway-token:    ; PYTHONPATH=. $(UV) run python deployment/deploy.py rotate-gateway-token
 
 # ── Ask the deployed system (CLI client) ───────────────────────────────
 # Thin wrapper around `python main.py` — see main.py --help for full docs.

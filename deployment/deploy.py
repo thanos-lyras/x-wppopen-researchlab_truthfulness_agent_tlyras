@@ -11,16 +11,18 @@ Two families of subcommands:
         python deployment/deploy.py orchestrator
         python deployment/deploy.py all           # all five in dependency order
 
-    Gateway wiring (one-shot / occasional):
-        python deployment/deploy.py register-gateway        # mints bearer + uploads gateway config
-        python deployment/deploy.py update-gateway-config   # re-uploads config without rotating token
+    Gateway wiring:
+        python deployment/deploy.py register-gateway        # idempotent — reuses existing bearer, or mints if missing; writes .env
+        python deployment/deploy.py update-gateway-config   # re-uploads config without touching the token
         python deployment/deploy.py smoke-gateway           # end-to-end smoke via the gateway
+        python deployment/deploy.py rotate-gateway-token    # explicit rotation — mints a NEW bearer
 
 Or via the Makefile wrappers:
     make deploy-mcp   /   make deploy-all   /
     make register-orchestrator-gateway   /
     make update-orchestrator-gateway-config   /
-    make smoke-orchestrator-gateway
+    make smoke-orchestrator-gateway   /
+    make rotate-orchestrator-gateway-token
 
 Dependency order for `all`:
     1. truthfulness-mcp          (sub-agents read MCP_SERVER_URL)
@@ -28,16 +30,19 @@ Dependency order for `all`:
     3. truthfulness-fine-tuned
     4. truthfulness-explainer
     5. truthfulness-orchestrator (reads the three sub-agents' *_A2A_URL)
+    6. register-gateway          (reuses existing bearer if present, else mints; writes .env)
 
 Each service deploy writes its URL back to `.env`, so later steps in this
-sequence pick up the URLs the earlier steps just produced. Gateway subcommands
-are NOT included in `all` — running them there would rotate the bearer token
-every deploy and break existing callers.
+sequence pick up the URLs the earlier steps just produced. `register-gateway`
+is safe inside `all` because it only mints a new bearer when the secret is
+missing — existing tokens are reused and never rotated. For explicit rotation,
+use `rotate-gateway-token`.
 """
 
 from __future__ import annotations
 
 import argparse
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -51,7 +56,12 @@ ENV_FILE = REPO_ROOT / ".env"
 REPO = "cloud-run-source-deploy"
 
 # Order matters when deploying "all":
-DEPLOY_ORDER = ["mcp", "zero-shot", "fine-tuned", "explainer", "orchestrator"]
+#   1. mcp                — sub-agents inject its URL into their env
+#   2-4. sub-agents       — each depends on MCP being up
+#   5. orchestrator       — depends on the three sub-agent URLs
+#   6. register-gateway   — idempotent (reuses existing bearer if present),
+#                           depends on ORCHESTRATOR_A2A_URL being in .env
+DEPLOY_ORDER = ["mcp", "zero-shot", "fine-tuned", "explainer", "orchestrator", "register-gateway"]
 
 # A2A Agents Gateway service account — granted roles/run.invoker on the
 # orchestrator so the gateway (which mints an ID token per upstream call)
@@ -60,13 +70,15 @@ GATEWAY_SERVICE_ACCOUNT = (
     "a2a-agent-gateway@x-wppai-dataspine-choreo-dev.iam.gserviceaccount.com"
 )
 
-# Gateway registration constants (mirror the Makefile targets).
+# Gateway registration constants.
 GATEWAY_SECRET_ID = "a2a-gateway-truthfulness-orchestrator-bearer-token"
 GATEWAY_AGENT_ID = "truthfulness-orchestrator"
 GATEWAY_DESC = (
     "ADK 2.0 orchestrator classifying statements as truthful/untruthful via "
     "zero-shot, fine-tuned, and explainer sub-agents."
 )
+GATEWAY_BASE_URL = "https://a2a-agent-gateway-eu-fq5fpdmt7a-ew.a.run.app"
+BEARER_ENV_KEY = "A2A_GATEWAY_TRUTHFULNESS_ORCHESTRATOR_BEARER_TOKEN"
 
 
 # ── tiny shell helpers ─────────────────────────────────────────────────
@@ -91,6 +103,18 @@ def _run_capture(cmd: list[str]) -> str:
     """Run a subprocess, capture stdout, stream stderr to terminal."""
     result = subprocess.run(cmd, check=True, stdout=subprocess.PIPE, text=True)
     return result.stdout
+
+
+def _run_capture_ok(cmd: list[str]) -> str | None:
+    """Run a subprocess. Returns stdout on success, None on non-zero exit.
+
+    Stderr is captured (not streamed) so callers can silently probe for
+    existence — e.g. "does this secret have any accessible version".
+    """
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode == 0:
+        return result.stdout
+    return None
 
 
 def _run_stream(cmd: list[str]) -> None:
@@ -406,25 +430,116 @@ def _upload_gateway_config(project: str, bucket: str, upstream: str) -> None:
     ])
 
 
-def register_gateway() -> None:
-    """Mint a new bearer token in Secret Manager + upload the gateway config."""
-    project, upstream, bucket = _gateway_context()
+def _existing_bearer(project: str) -> str | None:
+    """Return the latest version of the bearer secret if it exists, else None."""
+    stdout = _run_capture_ok([
+        "gcloud", "secrets", "versions", "access", "latest",
+        f"--secret={GATEWAY_SECRET_ID}",
+        f"--project={project}",
+    ])
+    if stdout is None:
+        return None
+    # Strip trailing newline gcloud appends; keep any internal chars intact.
+    return stdout.rstrip("\n")
 
-    print("▶ Minting bearer token in Secret Manager...")
+
+def _mint_new_bearer(project: str) -> str:
+    """Mint a new bearer version and return the token value."""
+    print("▶ Minting new bearer token in Secret Manager...")
     _run_stream([
         "uv", "run", "python", "deployment/gateway/upsert_gateway_bearer_secret.py",
         "--project", project,
         "--secret-id", GATEWAY_SECRET_ID,
         "--grant-accessor-service-account", GATEWAY_SERVICE_ACCOUNT,
-        "--print-token",
     ])
-    print()
+    # Read it back from Secret Manager — cleaner than parsing stdout.
+    token = _existing_bearer(project)
+    if not token:
+        raise SystemExit("❌ Minted a bearer but couldn't read it back from Secret Manager.")
+    return token
+
+
+def _grant_gateway_secret_accessor(project: str) -> None:
+    """Grant the gateway SA read on the bearer secret. Idempotent."""
+    _run_stream([
+        "gcloud", "secrets", "add-iam-policy-binding", GATEWAY_SECRET_ID,
+        f"--project={project}",
+        f"--member=serviceAccount:{GATEWAY_SERVICE_ACCOUNT}",
+        "--role=roles/secretmanager.secretAccessor",
+    ])
+
+
+def _get_or_mint_bearer(project: str) -> str:
+    """Return the existing bearer if the secret already has a version; otherwise mint."""
+    existing = _existing_bearer(project)
+    if existing:
+        print(f"✅ Reusing existing bearer in Secret Manager (secret={GATEWAY_SECRET_ID}).")
+        _grant_gateway_secret_accessor(project)
+        return existing
+    return _mint_new_bearer(project)
+
+
+def _default_caller_email() -> str | None:
+    """The gcloud ADC account email — used as a fallback for A2A_CALLER_EMAIL."""
+    stdout = _run_capture_ok(["gcloud", "config", "get-value", "account"])
+    if stdout is None:
+        return None
+    account = stdout.strip()
+    return account or None
+
+
+def _write_gateway_env(token: str) -> None:
+    """Populate the four A2A_GATEWAY_* variables in .env.
+
+    A2A_CALLER_EMAIL is only written when unset — it's operator-specific, so
+    we don't overwrite a value the operator has already customised.
+    """
+    _write_env("A2A_GATEWAY_BASE_URL", GATEWAY_BASE_URL)
+    _write_env("A2A_GATEWAY_AGENT_ID", GATEWAY_AGENT_ID)
+    _write_env(BEARER_ENV_KEY, token)
+
+    env = _env()
+    if not env.get("A2A_CALLER_EMAIL"):
+        caller = _default_caller_email()
+        if caller:
+            _write_env("A2A_CALLER_EMAIL", caller)
+
+
+def _warn_on_shell_bearer_shadow(token: str) -> None:
+    """Loudly flag when the operator's shell has an exported bearer that will
+    override .env on the next `make smoke-orchestrator-gateway` invocation.
+
+    This bit us during initial bring-up: `uv run --env-file .env` treats the
+    parent shell's environment as authoritative, so a stale export silently
+    shadows the freshly-written .env value.
+    """
+    shell_value = os.environ.get(BEARER_ENV_KEY)
+    if shell_value and shell_value != token:
+        print(
+            f"\n⚠  Your shell has a stale {BEARER_ENV_KEY} exported — it will\n"
+            f"   override .env on smoke tests. Run this in your CURRENT shell:\n\n"
+            f"       unset {BEARER_ENV_KEY}\n"
+        )
+
+
+def register_gateway() -> None:
+    """Idempotent gateway wiring: reuse existing bearer or mint one, upload config, write .env."""
+    project, upstream, bucket = _gateway_context()
+    token = _get_or_mint_bearer(project)
     _upload_gateway_config(project, bucket, upstream)
-    print(
-        "\n⚠  Copy the printed bearer token to your team vault AND paste it into .env as\n"
-        "   A2A_GATEWAY_TRUTHFULNESS_ORCHESTRATOR_BEARER_TOKEN=<token>\n"
-        "   (it is not stored anywhere else you can retrieve it later)."
-    )
+    _write_gateway_env(token)
+    _warn_on_shell_bearer_shadow(token)
+    print(f"\n✅ Gateway wired. `.env` updated. Ready for `make smoke-orchestrator-gateway`.")
+
+
+def rotate_gateway_token() -> None:
+    """Deliberately mint a new bearer version. Rotates the token — old callers break."""
+    project, _, _ = _gateway_context()
+    print("⚠  Rotating the bearer token. All existing callers must be updated with the new value.")
+    token = _mint_new_bearer(project)
+    _write_env(BEARER_ENV_KEY, token)
+    _warn_on_shell_bearer_shadow(token)
+    print("\n✅ Rotated. Distribute the new token to your team vault; old versions remain enabled in Secret Manager until you disable them explicitly.")
 
 
 def update_gateway_config() -> None:
@@ -452,10 +567,14 @@ DISPATCH = {
     "register-gateway":      register_gateway,
     "update-gateway-config": update_gateway_config,
     "smoke-gateway":         smoke_gateway,
+    "rotate-gateway-token":  rotate_gateway_token,
 }
 
-# Commands that don't need the bucket-bootstrap preflight and don't participate in `all`.
-GATEWAY_COMMANDS = {"register-gateway", "update-gateway-config", "smoke-gateway"}
+# Commands that don't need the bucket-bootstrap preflight. All except
+# register-gateway (which IS part of `all`) also skip the deploy-loop framing.
+GATEWAY_COMMANDS = {
+    "register-gateway", "update-gateway-config", "smoke-gateway", "rotate-gateway-token",
+}
 
 
 def main() -> int:
