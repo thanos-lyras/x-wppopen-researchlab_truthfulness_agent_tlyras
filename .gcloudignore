@@ -29,6 +29,9 @@ Makefile
 # CLI scripts (run locally; not COPY'd by any service Dockerfile).
 scripts/
 
+# Terraform state + init cache (deploy contexts don't need any of this).
+terraform/
+
 # Editor noise.
 .DS_Store
 .idea/

@@ -1,20 +1,26 @@
 #!/usr/bin/env python3
-"""Deploy the truthfulness-agent Cloud Run services.
+"""Deploy the truthfulness-agent Cloud Run services and register with the A2A Gateway.
 
-Holds the full deploy logic (Artifact Registry probe, Cloud Build, Cloud Run
-deploy with the right `--set-env-vars`, write-back of the deployed URL to
-`.env`) so the Makefile targets stay one-liners.
+Two families of subcommands:
 
-Usage:
-    python deployment/deploy.py mcp           # one service
-    python deployment/deploy.py zero-shot
-    python deployment/deploy.py fine-tuned
-    python deployment/deploy.py explainer
-    python deployment/deploy.py orchestrator
-    python deployment/deploy.py all           # all five in dependency order
+    Service deploys (idempotent, safe to re-run):
+        python deployment/deploy.py mcp
+        python deployment/deploy.py zero-shot
+        python deployment/deploy.py fine-tuned
+        python deployment/deploy.py explainer
+        python deployment/deploy.py orchestrator
+        python deployment/deploy.py all           # all five in dependency order
+
+    Gateway wiring (one-shot / occasional):
+        python deployment/deploy.py register-gateway        # mints bearer + uploads gateway config
+        python deployment/deploy.py update-gateway-config   # re-uploads config without rotating token
+        python deployment/deploy.py smoke-gateway           # end-to-end smoke via the gateway
 
 Or via the Makefile wrappers:
-    make deploy-mcp   /   make deploy-all   /   ...
+    make deploy-mcp   /   make deploy-all   /
+    make register-orchestrator-gateway   /
+    make update-orchestrator-gateway-config   /
+    make smoke-orchestrator-gateway
 
 Dependency order for `all`:
     1. truthfulness-mcp          (sub-agents read MCP_SERVER_URL)
@@ -23,8 +29,10 @@ Dependency order for `all`:
     4. truthfulness-explainer
     5. truthfulness-orchestrator (reads the three sub-agents' *_A2A_URL)
 
-Each step writes its deployed URL back to `.env`, so later steps in this
-sequence pick up the URLs the earlier steps just produced.
+Each service deploy writes its URL back to `.env`, so later steps in this
+sequence pick up the URLs the earlier steps just produced. Gateway subcommands
+are NOT included in `all` — running them there would rotate the bearer token
+every deploy and break existing callers.
 """
 
 from __future__ import annotations
@@ -35,6 +43,8 @@ import sys
 from pathlib import Path
 
 from dotenv import dotenv_values, set_key
+
+from deployment import bootstrap_bucket
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 ENV_FILE = REPO_ROOT / ".env"
@@ -48,6 +58,14 @@ DEPLOY_ORDER = ["mcp", "zero-shot", "fine-tuned", "explainer", "orchestrator"]
 # can reach the --no-allow-unauthenticated orchestrator.
 GATEWAY_SERVICE_ACCOUNT = (
     "a2a-agent-gateway@x-wppai-dataspine-choreo-dev.iam.gserviceaccount.com"
+)
+
+# Gateway registration constants (mirror the Makefile targets).
+GATEWAY_SECRET_ID = "a2a-gateway-truthfulness-orchestrator-bearer-token"
+GATEWAY_AGENT_ID = "truthfulness-orchestrator"
+GATEWAY_DESC = (
+    "ADK 2.0 orchestrator classifying statements as truthful/untruthful via "
+    "zero-shot, fine-tuned, and explainer sub-agents."
 )
 
 
@@ -332,15 +350,112 @@ def deploy_orchestrator() -> None:
     _write_env("ORCHESTRATOR_A2A_URL", f"{url}/.well-known/agent-card.json")
 
 
+# ── A2A Gateway registration ───────────────────────────────────────────
+# The gateway wiring is a separate concern from service deploys:
+#   - `register-gateway` is one-shot per registration (mints a NEW bearer
+#     token). Running it twice rotates the token — all existing callers must
+#     be updated with the new value. Deliberately excluded from `all`.
+#   - `update-gateway-config` is safe to re-run any time the orchestrator
+#     URL changes (region migration, service rename). Never rotates the
+#     token.
+#   - `smoke-gateway` is a read-only end-to-end verification through the
+#     gateway. Requires the four A2A_GATEWAY_* vars in .env.
+#
+# All three shell out to the standalone scripts under `deployment/gateway/`
+# so the argument surface + gcloud path resolution lives in ONE place.
+
+def _gateway_context() -> tuple[str, str, str]:
+    """Return (project, upstream_base_url, config_bucket) from .env.
+
+    Requires ORCHESTRATOR_A2A_URL — populated after `deploy_orchestrator()`
+    has written it back to .env. Raises SystemExit with a clear message
+    otherwise so the operator knows to run `deploy orchestrator` first.
+    """
+    env = _env()
+    project = env.get("GOOGLE_CLOUD_PROJECT")
+    if not project:
+        raise SystemExit("❌ GOOGLE_CLOUD_PROJECT missing in .env")
+    orchestrator_url = env.get("ORCHESTRATOR_A2A_URL", "")
+    if not orchestrator_url:
+        raise SystemExit(
+            "❌ ORCHESTRATOR_A2A_URL missing in .env — run "
+            "`python deployment/deploy.py orchestrator` (or `all`) first."
+        )
+    upstream = orchestrator_url.removesuffix("/.well-known/agent-card.json")
+    bucket = f"{project}-a2a-gateway-agent-config"
+    return project, upstream, bucket
+
+
+def _upload_gateway_config(project: str, bucket: str, upstream: str) -> None:
+    print(f"▶ Uploading gs://{bucket}/agents/{GATEWAY_AGENT_ID}.json → upstream {upstream}")
+    _run_stream([
+        "uv", "run", "python", "deployment/gateway/upsert_gcs_agent_config.py",
+        "--project", project,
+        "--bucket", bucket,
+        "--prefix", "agents",
+        "--agent-id", GATEWAY_AGENT_ID,
+        "--backend-kind", "http_jsonrpc",
+        "--upstream-base-url", upstream,
+        "--name", "Truthfulness Orchestrator",
+        "--description", GATEWAY_DESC,
+        "--monthly-budget-usd", "50",
+        "--estimated-cost-per-call-usd", "0.05",
+        "--capture-call-content",
+        "--capture-call-content-max-chars", "4000",
+        "--forward-id-token",
+    ])
+
+
+def register_gateway() -> None:
+    """Mint a new bearer token in Secret Manager + upload the gateway config."""
+    project, upstream, bucket = _gateway_context()
+
+    print("▶ Minting bearer token in Secret Manager...")
+    _run_stream([
+        "uv", "run", "python", "deployment/gateway/upsert_gateway_bearer_secret.py",
+        "--project", project,
+        "--secret-id", GATEWAY_SECRET_ID,
+        "--grant-accessor-service-account", GATEWAY_SERVICE_ACCOUNT,
+        "--print-token",
+    ])
+    print()
+    _upload_gateway_config(project, bucket, upstream)
+    print(
+        "\n⚠  Copy the printed bearer token to your team vault AND paste it into .env as\n"
+        "   A2A_GATEWAY_TRUTHFULNESS_ORCHESTRATOR_BEARER_TOKEN=<token>\n"
+        "   (it is not stored anywhere else you can retrieve it later)."
+    )
+
+
+def update_gateway_config() -> None:
+    """Re-upload the gateway config with the current orchestrator URL. Does not rotate the token."""
+    project, upstream, bucket = _gateway_context()
+    _upload_gateway_config(project, bucket, upstream)
+
+
+def smoke_gateway() -> None:
+    """End-to-end smoke via the gateway. Requires the four A2A_GATEWAY_* vars in .env."""
+    _run_stream([
+        "uv", "run", "--env-file", str(ENV_FILE),
+        "python", "deployment/gateway/smoke_orchestrator.py",
+    ])
+
+
 # ── CLI ────────────────────────────────────────────────────────────────
 
 DISPATCH = {
-    "mcp":          deploy_mcp,
-    "zero-shot":    deploy_zero_shot,
-    "fine-tuned":   deploy_fine_tuned,
-    "explainer":    deploy_explainer,
-    "orchestrator": deploy_orchestrator,
+    "mcp":                   deploy_mcp,
+    "zero-shot":             deploy_zero_shot,
+    "fine-tuned":            deploy_fine_tuned,
+    "explainer":             deploy_explainer,
+    "orchestrator":          deploy_orchestrator,
+    "register-gateway":      register_gateway,
+    "update-gateway-config": update_gateway_config,
+    "smoke-gateway":         smoke_gateway,
 }
+
+# Commands that don't need the bucket-bootstrap preflight and don't participate in `all`.
+GATEWAY_COMMANDS = {"register-gateway", "update-gateway-config", "smoke-gateway"}
 
 
 def main() -> int:
@@ -351,9 +466,34 @@ def main() -> int:
     parser.add_argument(
         "service",
         choices=list(DISPATCH.keys()) + ["all"],
-        help="Service to deploy, or 'all' for all in dependency order.",
+        help="Service to deploy, or 'all' for the 5 services in dependency order, or a gateway command.",
     )
     args = parser.parse_args()
+
+    # Gateway commands are one-off and don't touch the uploads bucket — skip
+    # the preflight + deploy-loop framing entirely.
+    if args.service in GATEWAY_COMMANDS:
+        try:
+            DISPATCH[args.service]()
+        except subprocess.CalledProcessError as e:
+            print(f"\n❌ {args.service} failed (exit {e.returncode}).", file=sys.stderr)
+            return e.returncode
+        return 0
+
+    # Preflight: ensure the GCS upload bucket + runtime SA IAM binding exist
+    # before any Cloud Run service is deployed. Idempotent — no-op when the
+    # bucket + binding are already in place. On a fresh clone this is what
+    # generates the bucket name and writes GCS_BUCKET back to .env, so the
+    # subsequent deploys can inject GCS_BUCKET into MCP + orchestrator envs.
+    print(f"\n{'=' * 60}\n▶ Preflight: GCS bucket + IAM\n{'=' * 60}", flush=True)
+    rc = bootstrap_bucket.main()
+    if rc != 0:
+        print(
+            f"\n❌ Bucket bootstrap failed (exit {rc}). Deploys aborted — "
+            f"fix the GCS/IAM error above and re-run.",
+            file=sys.stderr,
+        )
+        return rc
 
     targets = DEPLOY_ORDER if args.service == "all" else [args.service]
 

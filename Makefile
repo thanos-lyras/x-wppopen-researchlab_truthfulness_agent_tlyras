@@ -2,12 +2,6 @@ SHELL := /bin/bash
 UV := uv
 ENV_FILE := .env
 
-# Constants for the A2A Gateway registration flow (see README § Security).
-GATEWAY_SA        := a2a-agent-gateway@x-wppai-dataspine-choreo-dev.iam.gserviceaccount.com
-GATEWAY_SECRET_ID := a2a-gateway-truthfulness-orchestrator-bearer-token
-GATEWAY_AGENT_ID  := truthfulness-orchestrator
-GATEWAY_DESC      := ADK 2.0 orchestrator classifying statements as truthful/untruthful via zero-shot, fine-tuned, and explainer sub-agents.
-
 .DEFAULT_GOAL := help
 
 .PHONY: help bootstrap bootstrap-bucket configure install auth notebook \
@@ -16,6 +10,7 @@ GATEWAY_DESC      := ADK 2.0 orchestrator classifying statements as truthful/unt
         _run-a2a-zero-shot _run-a2a-fine-tuned _run-a2a-explainer _run-a2a-orchestrator \
         dev dev-no-ui \
         deploy-mcp deploy-zero-shot deploy-fine-tuned deploy-explainer deploy-orchestrator deploy-all \
+        tf-init tf-plan tf-apply tf-destroy \
         register-orchestrator-gateway update-orchestrator-gateway-config smoke-orchestrator-gateway \
         ask test-ask test-ask-inline test-ask-file test-ask-uri test-ask-agent-hint test-ask-raw \
         clean
@@ -42,6 +37,12 @@ help:
 	@echo "Cloud deploys (deployment/deploy.py):"
 	@echo "  deploy-all                           deploy all 5 in dependency order"
 	@echo "  deploy-{mcp,zero-shot,fine-tuned,explainer,orchestrator}"
+	@echo ""
+	@echo "Terraform (terraform/):"
+	@echo "  tf-init                              terraform init"
+	@echo "  tf-plan                              terraform plan"
+	@echo "  tf-apply                             terraform apply — provisions bucket + AR + PGA then runs deploy-all"
+	@echo "  tf-destroy                           terraform destroy (does NOT undeploy Cloud Run services created by deploy.py)"
 	@echo ""
 	@echo "Gateway integration (see README § Security):"
 	@echo "  register-orchestrator-gateway        one-time: mint bearer + upload config"
@@ -92,7 +93,7 @@ auth:
 # `roles/storage.objectAdmin` on it. Reads GCS_BUCKET/GCS_LOCATION/PROJECT
 # from .env. Runs no-op when everything already exists.
 bootstrap-bucket:
-	$(UV) run python deployment/bootstrap_bucket.py
+	PYTHONPATH=. $(UV) run python deployment/bootstrap_bucket.py
 
 notebook:
 	$(UV) sync --extra notebook
@@ -164,65 +165,29 @@ dev-no-ui:
 # The full deploy logic (Artifact Registry probe, Cloud Build, gcloud run deploy
 # with ingress + vpc-egress + IAM grants, .env write-back) lives in
 # deployment/deploy.py. Targets here are one-liners. See README § Cloud deployment.
-deploy-mcp:          ; $(UV) run python deployment/deploy.py mcp
-deploy-zero-shot:    ; $(UV) run python deployment/deploy.py zero-shot
-deploy-fine-tuned:   ; $(UV) run python deployment/deploy.py fine-tuned
-deploy-explainer:    ; $(UV) run python deployment/deploy.py explainer
-deploy-orchestrator: ; $(UV) run python deployment/deploy.py orchestrator
-deploy-all:          ; $(UV) run python deployment/deploy.py all
+deploy-mcp:          ; PYTHONPATH=. $(UV) run python deployment/deploy.py mcp
+deploy-zero-shot:    ; PYTHONPATH=. $(UV) run python deployment/deploy.py zero-shot
+deploy-fine-tuned:   ; PYTHONPATH=. $(UV) run python deployment/deploy.py fine-tuned
+deploy-explainer:    ; PYTHONPATH=. $(UV) run python deployment/deploy.py explainer
+deploy-orchestrator: ; PYTHONPATH=. $(UV) run python deployment/deploy.py orchestrator
+deploy-all:          ; PYTHONPATH=. $(UV) run python deployment/deploy.py all
+
+# ── Terraform ──────────────────────────────────────────────────────────
+# Declarative wrapper: provisions bucket + Artifact Registry + PGA on the
+# default subnet, then invokes `deployment/deploy.py all` via a null_resource
+# so all 5 Cloud Run services come up in one `terraform apply`. See terraform/.
+tf-init:    ; cd terraform && terraform init
+tf-plan:    ; cd terraform && terraform plan
+tf-apply:   ; cd terraform && terraform apply
+tf-destroy: ; cd terraform && terraform destroy
 
 # ── A2A Agents Gateway (external bearer-token access) ──────────────────
-# One-time bootstrap: mints the bearer in Secret Manager, grants the gateway SA
-# access, uploads the per-agent JSON config to GCS. Prints the token — capture
-# it into your team vault AND paste into .env as
-# A2A_GATEWAY_TRUTHFULNESS_ORCHESTRATOR_BEARER_TOKEN.
-register-orchestrator-gateway:
-	@set -a; source $(ENV_FILE); set +a; \
-	if [ -z "$$GOOGLE_CLOUD_PROJECT" ]; then echo "❌ GOOGLE_CLOUD_PROJECT missing in $(ENV_FILE)"; exit 1; fi; \
-	if [ -z "$$ORCHESTRATOR_A2A_URL" ]; then echo "❌ ORCHESTRATOR_A2A_URL missing — run 'make deploy-orchestrator' first"; exit 1; fi; \
-	UPSTREAM=$${ORCHESTRATOR_A2A_URL%/.well-known/agent-card.json}; \
-	BUCKET=$${GOOGLE_CLOUD_PROJECT}-a2a-gateway-agent-config; \
-	echo "▶ Minting bearer token in Secret Manager..."; \
-	$(UV) run python scripts/gateway/upsert_gateway_bearer_secret.py \
-		--project $$GOOGLE_CLOUD_PROJECT \
-		--secret-id $(GATEWAY_SECRET_ID) \
-		--grant-accessor-service-account $(GATEWAY_SA) \
-		--print-token; \
-	echo ""; \
-	echo "▶ Uploading gs://$$BUCKET/agents/$(GATEWAY_AGENT_ID).json → upstream $$UPSTREAM"; \
-	$(UV) run python scripts/gateway/upsert_gcs_agent_config.py \
-		--project $$GOOGLE_CLOUD_PROJECT --bucket $$BUCKET --prefix agents \
-		--agent-id $(GATEWAY_AGENT_ID) --backend-kind http_jsonrpc \
-		--upstream-base-url $$UPSTREAM \
-		--name "Truthfulness Orchestrator" \
-		--description "$(GATEWAY_DESC)" \
-		--monthly-budget-usd 50 --estimated-cost-per-call-usd 0.05 \
-		--capture-call-content --capture-call-content-max-chars 4000 \
-		--forward-id-token
-
-# Re-upload the GCS config WITHOUT rotating the bearer token. Use after any
-# change to the orchestrator's URL (region move, service rename).
-update-orchestrator-gateway-config:
-	@set -a; source $(ENV_FILE); set +a; \
-	if [ -z "$$GOOGLE_CLOUD_PROJECT" ]; then echo "❌ GOOGLE_CLOUD_PROJECT missing in $(ENV_FILE)"; exit 1; fi; \
-	if [ -z "$$ORCHESTRATOR_A2A_URL" ]; then echo "❌ ORCHESTRATOR_A2A_URL missing — run 'make deploy-orchestrator' first"; exit 1; fi; \
-	UPSTREAM=$${ORCHESTRATOR_A2A_URL%/.well-known/agent-card.json}; \
-	BUCKET=$${GOOGLE_CLOUD_PROJECT}-a2a-gateway-agent-config; \
-	echo "▶ Updating gs://$$BUCKET/agents/$(GATEWAY_AGENT_ID).json → upstream $$UPSTREAM"; \
-	$(UV) run python scripts/gateway/upsert_gcs_agent_config.py \
-		--project $$GOOGLE_CLOUD_PROJECT --bucket $$BUCKET --prefix agents \
-		--agent-id $(GATEWAY_AGENT_ID) --backend-kind http_jsonrpc \
-		--upstream-base-url $$UPSTREAM \
-		--name "Truthfulness Orchestrator" \
-		--description "$(GATEWAY_DESC)" \
-		--monthly-budget-usd 50 --estimated-cost-per-call-usd 0.05 \
-		--capture-call-content --capture-call-content-max-chars 4000 \
-		--forward-id-token
-
-# End-to-end smoke via the gateway. Requires the four A2A_GATEWAY_* vars in .env
-# (see .env.example) — token from `make register-orchestrator-gateway`.
-smoke-orchestrator-gateway:
-	PYTHONPATH=. $(UV) run --env-file $(ENV_FILE) python scripts/gateway/smoke_orchestrator.py
+# All three targets are thin wrappers around subcommands of deployment/deploy.py.
+# The argument surface + gateway constants live in that one place — see
+# deployment/deploy.py `register_gateway` / `update_gateway_config` / `smoke_gateway`.
+register-orchestrator-gateway:        ; PYTHONPATH=. $(UV) run python deployment/deploy.py register-gateway
+update-orchestrator-gateway-config:   ; PYTHONPATH=. $(UV) run python deployment/deploy.py update-gateway-config
+smoke-orchestrator-gateway:           ; PYTHONPATH=. $(UV) run python deployment/deploy.py smoke-gateway
 
 # ── Ask the deployed system (CLI client) ───────────────────────────────
 # Thin wrapper around `python main.py` — see main.py --help for full docs.
