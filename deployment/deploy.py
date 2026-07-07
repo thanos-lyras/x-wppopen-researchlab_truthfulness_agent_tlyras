@@ -43,6 +43,13 @@ REPO = "cloud-run-source-deploy"
 # Order matters when deploying "all":
 DEPLOY_ORDER = ["mcp", "zero-shot", "fine-tuned", "explainer", "orchestrator"]
 
+# A2A Agents Gateway service account — granted roles/run.invoker on the
+# orchestrator so the gateway (which mints an ID token per upstream call)
+# can reach the --no-allow-unauthenticated orchestrator.
+GATEWAY_SERVICE_ACCOUNT = (
+    "a2a-agent-gateway@x-wppai-dataspine-choreo-dev.iam.gserviceaccount.com"
+)
+
 
 # ── tiny shell helpers ─────────────────────────────────────────────────
 
@@ -103,21 +110,64 @@ def _build_image(project: str, image: str, cloudbuild_path: str) -> None:
 def _deploy_service(
     *, service_name: str, image: str, project: str, location: str,
     env_vars: dict[str, str],
+    ingress: str = "all",
+    allow_unauthenticated: bool = True,
+    vpc_egress: str | None = None,
 ) -> str:
-    """Deploy a Cloud Run service. Returns its public HTTPS URL."""
-    print(f"▶ Deploying {service_name} to Cloud Run in {location}...")
+    """Deploy a Cloud Run service. Returns its public HTTPS URL.
+
+    - `ingress`: "all" (default) or "internal" (only accepts traffic that
+      arrives via a VPC network in the same project — requires callers to
+      have `vpc_egress` set).
+    - `allow_unauthenticated`: True adds --allow-unauthenticated (default);
+      False adds --no-allow-unauthenticated (IAM-locked; caller must
+      subsequently be granted `roles/run.invoker`).
+    - `vpc_egress`: when set (e.g. "all-traffic"), routes the service's
+      outbound HTTPS through the default VPC. Required on any service that
+      CALLS a --ingress=internal destination in the same project. Requires
+      Private Google Access enabled on the default subnet (one-time:
+      `gcloud compute networks subnets update default --region=<r>
+      --enable-private-ip-google-access`).
+    """
+    print(f"▶ Deploying {service_name} to Cloud Run in {location} "
+          f"(ingress={ingress}, unauth={'allowed' if allow_unauthenticated else 'blocked'}, "
+          f"vpc_egress={vpc_egress or 'off'})...")
     env_str = ",".join(f"{k}={v}" for k, v in env_vars.items())
-    url = _run_capture([
+    auth_flag = "--allow-unauthenticated" if allow_unauthenticated else "--no-allow-unauthenticated"
+    cmd = [
         "gcloud", "run", "deploy", service_name,
         f"--image={image}",
         f"--region={location}",
         f"--project={project}",
-        "--allow-unauthenticated",
+        auth_flag,
+        f"--ingress={ingress}",
         f"--set-env-vars={env_str}",
         "--format=value(status.url)",
-    ]).strip()
+    ]
+    if vpc_egress is not None:
+        cmd[-1:-1] = [
+            "--network=default",
+            "--subnet=default",
+            f"--vpc-egress={vpc_egress}",
+        ]
+    url = _run_capture(cmd).strip()
     print(f"✅ Deployed: {url}")
     return url
+
+
+def _grant_run_invoker(project: str, location: str, service_name: str, member: str) -> None:
+    """Grant `roles/run.invoker` on a Cloud Run service to a principal.
+
+    Idempotent — gcloud silently succeeds if the binding already exists.
+    """
+    print(f"▶ Granting roles/run.invoker on {service_name} to {member}...")
+    _run_stream([
+        "gcloud", "run", "services", "add-iam-policy-binding", service_name,
+        f"--region={location}",
+        f"--project={project}",
+        f"--member={member}",
+        "--role=roles/run.invoker",
+    ])
 
 
 def _write_env(key: str, value: str) -> None:
@@ -157,6 +207,11 @@ def deploy_mcp() -> None:
     url = _deploy_service(
         service_name="truthfulness-mcp",
         image=image, project=project, location=location,
+        # ingress=internal + vpc_egress: MCP is only reachable via the default
+        # VPC. Every caller (orchestrator + 3 sub-agents) must have vpc_egress
+        # set too. External laptops hit the ingress edge and get 404.
+        ingress="internal",
+        vpc_egress="all-traffic",
         env_vars={
             **_gcp_env(env),
             "ZERO_SHOT_MODEL": env.get("ZERO_SHOT_MODEL", ""),
@@ -193,6 +248,12 @@ def _deploy_subagent(name_kebab: str, *, extra_env: dict[str, str] | None = None
     url = _deploy_service(
         service_name=service_name, image=image,
         project=project, location=location,
+        # ingress=internal + vpc_egress: sub-agent is only reachable from
+        # the orchestrator over the default VPC. Sub-agent also has vpc_egress
+        # so it can reach the (also ingress=internal) MCP server. External
+        # laptops get 404 at the edge.
+        ingress="internal",
+        vpc_egress="all-traffic",
         env_vars={
             **_gcp_env(env),
             "MCP_SERVER_URL": env.get("MCP_SERVER_URL", ""),
@@ -232,6 +293,18 @@ def deploy_orchestrator() -> None:
     url = _deploy_service(
         service_name=service_name, image=image,
         project=project, location=location,
+        # Ingress stays "all" because the A2A Gateway lives in a different
+        # project's edge context; its traffic isn't classified as internal
+        # to our VPC. IAM (--no-allow-unauthenticated + gateway SA has
+        # run.invoker) is what enforces auth here.
+        ingress="all",
+        allow_unauthenticated=False,
+        # vpc_egress: orchestrator must route through our VPC on outbound
+        # calls to (a) the ingress=internal sub-agents and (b) the
+        # ingress=internal MCP (from its own direct McpToolset for the
+        # /invoke flow). Vertex + GCS calls stay on Google's private
+        # backbone via Private Google Access on the default subnet.
+        vpc_egress="all-traffic",
         env_vars={
             **_gcp_env(env),
             "ORCHESTRATOR_MODEL": env.get("ORCHESTRATOR_MODEL", ""),
@@ -240,12 +313,21 @@ def deploy_orchestrator() -> None:
             "ZERO_SHOT_A2A_URL": env.get("ZERO_SHOT_A2A_URL", ""),
             # The /invoke REST handler uploads the request body to GCS via
             # GCSService(), which reads GCS_BUCKET + GCS_LOCATION from env.
-            # Forward both so the orchestrator container can use the same
-            # bucket the MCP server uses.
+            # The orchestrator also has direct McpToolset calls into MCP for
+            # explain_truthfulness_from_gcs / predict_truthfulness_from_gcs,
+            # which need MCP_SERVER_URL.
             "GCS_BUCKET": env.get("GCS_BUCKET", ""),
-            "GCS_LOCATION": env.get("GCS_LOCATION", "us-central1"),
+            "GCS_LOCATION": env.get("GCS_LOCATION", "europe-west1"),
+            "MCP_SERVER_URL": env.get("MCP_SERVER_URL", ""),
             **_public_a2a_env("ORCHESTRATOR", public_host),
         },
+    )
+    # Grant the A2A Gateway SA invoker so it can call this locked-down service
+    # with the ID token it mints per request (forward_id_token=true in the
+    # gateway's GCS config). Idempotent — safe on every redeploy.
+    _grant_run_invoker(
+        project, location, service_name,
+        member=f"serviceAccount:{GATEWAY_SERVICE_ACCOUNT}",
     )
     _write_env("ORCHESTRATOR_A2A_URL", f"{url}/.well-known/agent-card.json")
 
