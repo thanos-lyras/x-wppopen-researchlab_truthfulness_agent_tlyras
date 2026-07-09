@@ -1,19 +1,9 @@
-"""Explainer Agent.
-
-ADK 2.0 agent that produces natural-language explanations for truthfulness
-verdicts on political statements.
-Exposes `root_agent` so this folder can be launched standalone with
-`adk web agents/explainer`, and `a2a_app` so it can be served over A2A via
-`uvicorn agents.explainer.agent:a2a_app`.
-"""
+"""Explainer agent. Wraps the `explain_truthfulness_from_gcs` MCP tool — verdict + free-form explanation per point."""
 
 from __future__ import annotations
-
 import os
-
 from google.adk.a2a.utils.agent_to_a2a import to_a2a
 from google.adk.agents import Agent
-
 from .prompt import EXPLAINER_INSTRUCTION
 from .tools import tools
 
@@ -29,21 +19,15 @@ explainer_agent = Agent(
         "metrics (accuracy, precision, recall, f1, confusion matrix)."
     ),
     instruction=EXPLAINER_INSTRUCTION,
-    # `or` (not the dict default) so the fallback also kicks in when the env
-    # var is set-but-empty — e.g. when `.env` has `EXPLAINER_MODEL=` or the
-    # Cloud Run deploy passes `KEY=$VAR` with VAR unset (shell expands to "").
     model=os.environ.get("EXPLAINER_MODEL") or "gemini-2.5-flash",
     tools=tools,
 )
 
 root_agent = explainer_agent
 
-# `to_a2a()`'s host/port/protocol go into the published agent card — that's the
-# URL remote callers (e.g. the orchestrator's RemoteA2aAgent) will POST to. It
-# is NOT the uvicorn listen address (Cloud Run sets that via $PORT). For local
-# dev the defaults work; in Cloud Run the deploy injects EXPLAINER_A2A_PUBLIC_HOST
-# / EXPLAINER_A2A_PROTOCOL / EXPLAINER_A2A_PUBLIC_PORT so the card advertises the
-# public HTTPS URL instead of `http://0.0.0.0:8003`.
+# `to_a2a()` host/port/protocol go into the published agent card, NOT the uvicorn
+# listen address. Cloud Run deploy injects *_PUBLIC_* so the card advertises the
+# public HTTPS URL instead of `http://0.0.0.0:<port>`.
 a2a_app = to_a2a(
     explainer_agent,
     host=os.environ.get("EXPLAINER_A2A_PUBLIC_HOST", "0.0.0.0"),

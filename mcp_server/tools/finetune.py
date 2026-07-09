@@ -1,27 +1,18 @@
 """`fine_tune_truthfulness` MCP tool — composes DatasetProcessor + GCSService + TuningManager."""
 
 from __future__ import annotations
-
 from google.adk.tools.function_tool import FunctionTool
-
 from schemas.models import FineTuneRequest, FineTuneResponse, SplitCounts
 from services.gcs_service import GCSService
-
 from ..utils import config
 from ..utils.dataset_processor import DatasetProcessor
 from ..utils.tuning_manager import TuningManager
 
 
 def fine_tune_truthfulness(req: FineTuneRequest) -> FineTuneResponse:
-    """Fine-tune a Gemini model for binary truthfulness classification.
+    """Prepare dataset → upload to GCS → submit Vertex SFT (blocks until done if `req.wait`).
 
-    See `schemas.models.FineTuneRequest` / `FineTuneResponse` for field-level docs.
-
-    Behavior summary:
-    - Prepares the dataset (6-way → binary label map + stratified 80/10/10 split).
-    - Uploads train + val JSONL to GCS.
-    - Submits a Vertex AI Gemini SFT job.
-    - If `req.wait=True`, blocks until terminal state and fills `tuned_model`.
+    See `schemas.models.FineTuneRequest` / `FineTuneResponse` for field docs.
     """
     paths = DatasetProcessor().prepare(req.csv_path)
 

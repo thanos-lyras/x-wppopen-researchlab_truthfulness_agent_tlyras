@@ -1,17 +1,7 @@
-"""Remote client for the zero-shot predictor agent.
-
-Wraps the running A2A server (`make run-a2a NAME=zero_shot`) as a
-`RemoteA2aAgent` so the orchestrator (or any other agent) can delegate to
-it over A2A — without importing zero_shot's Python code in-process.
-
-The port comes from `ZERO_SHOT_A2A_PORT` in `.env`, the same var the
-server-side `a2a_app` reads, so the card URL and bind port always match.
-"""
+"""`RemoteA2aAgent` wrapping the zero-shot A2A server — for the orchestrator to consume without in-process imports."""
 
 from __future__ import annotations
-
 import os
-
 from google.adk.agents.remote_a2a_agent import (
     AGENT_CARD_WELL_KNOWN_PATH,
     RemoteA2aAgent,
@@ -19,8 +9,6 @@ from google.adk.agents.remote_a2a_agent import (
 
 _PORT = os.environ.get("ZERO_SHOT_A2A_PORT", "8001")
 _HOST = os.environ.get("ZERO_SHOT_A2A_HOST", "localhost")
-# Prefer ZERO_SHOT_A2A_URL if set (e.g. the deployed Cloud Run agent-card URL
-# written by `make deploy-zero-shot`); fall back to localhost for local dev.
 _AGENT_CARD = (
     os.environ.get("ZERO_SHOT_A2A_URL")
     or f"http://{_HOST}:{_PORT}{AGENT_CARD_WELL_KNOWN_PATH}"

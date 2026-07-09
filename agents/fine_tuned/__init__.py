@@ -1,11 +1,6 @@
-"""Agent bootstrap.
-
-`adk web agents/fine_tuned` imports this package directly, so the auth env
-vars must be set here — the parent `agents/__init__.py` may not run.
-"""
+"""Agent bootstrap — re-runs the ADC / env setup because `adk web agents/fine_tuned` skips the parent package."""
 
 import os
-
 import google.auth
 
 _, _project_id = google.auth.default()

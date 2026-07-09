@@ -2,7 +2,6 @@
 
 import contextlib
 from collections.abc import AsyncIterator, Iterable
-
 from google.adk.tools.function_tool import FunctionTool
 from google.adk.tools.mcp_tool.conversion_utils import adk_to_mcp_tool_type
 from mcp import types as mcp_types
@@ -10,7 +9,6 @@ from mcp.server.lowlevel import Server
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from starlette.applications import Starlette
 from starlette.routing import Mount
-
 from .tools.check_finetune_status import check_finetune_status_tool
 from .tools.explain import explain_truthfulness_from_gcs_tool, explain_truthfulness_tool
 from .tools.finetune import fine_tune_truthfulness_tool
@@ -45,7 +43,6 @@ class TruthfulnessMcpServer:
         )
 
 
-# Compose tools here. To add a new tool: import it above and append to the list.
 app = TruthfulnessMcpServer(tools=[
     predict_truthfulness_tool,
     predict_truthfulness_from_gcs_tool,

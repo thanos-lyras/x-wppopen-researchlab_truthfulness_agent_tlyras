@@ -1,26 +1,10 @@
-"""Smoke-test the unified `predict_truthfulness` MCP tool — fine-tuned path.
-
-Connects to the running MCP server over Streamable HTTP, confirms the tool is
-registered, then calls it twice with `use_fine_tuned=True`:
-  1. without labels — exercises the predictions-only path
-  2. with labels    — exercises the metrics-enabled path (accuracy, f1, etc.)
-
-Prereq:  `make run-mcp` is running in another terminal.
-
-Usage:
-    make test-fine-tuned
-    # or
-    python -m scripts.test_predict_fine_tuned
-"""
+"""Smoke test — connects to a running MCP server and calls `predict_truthfulness` (use_fine_tuned=True) twice."""
 
 from __future__ import annotations
-
 import asyncio
 import os
-
 from mcp import ClientSession
 from mcp.client.streamable_http import streamablehttp_client
-
 from mcp_server.utils import config
 
 _MCP_PORT = os.environ.get("MCP_SERVER_PORT", "8004")
@@ -35,7 +19,6 @@ _GROUND_TRUTH = [True, False]
 
 
 def _payload_text(result) -> str:
-    """Pull the first TextContent block from an MCP CallToolResult."""
     for block in result.content:
         text = getattr(block, "text", None)
         if text is not None:
@@ -59,7 +42,6 @@ async def main() -> None:
                 "predict_truthfulness not exposed by the MCP server"
             )
 
-            # Path 1: predictions only — metrics should be None
             print("\n▶ Call without labels (use_fine_tuned=True):")
             result = await session.call_tool(
                 "predict_truthfulness",
@@ -67,7 +49,6 @@ async def main() -> None:
             )
             print(_payload_text(result))
 
-            # Path 2: predictions + metrics — pass ground-truth labels
             print("\n▶ Call with labels (use_fine_tuned=True):")
             result = await session.call_tool(
                 "predict_truthfulness",

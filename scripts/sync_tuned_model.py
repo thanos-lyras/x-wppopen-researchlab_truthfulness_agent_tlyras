@@ -1,14 +1,6 @@
-"""Wait on an existing Vertex AI tuning job and write FINE_TUNED_MODEL=… to .env.
-
-Usage:
-    python -m scripts.sync_tuned_model <JOB_RESOURCE_NAME>
-
-JOB_RESOURCE_NAME looks like:
-    projects/<num>/locations/us-central1/tuningJobs/<id>
-"""
+"""Poll an existing Vertex tuning job to terminal state and write FINE_TUNED_MODEL to .env."""
 
 import argparse
-
 from mcp_server.utils.tuning_manager import TuningManager
 from services.vertex_client import client
 
@@ -16,7 +8,7 @@ from services.vertex_client import client
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("job_name",
-                   help="Vertex tuning job resource name (from the original submit output)")
+                   help="Vertex tuning job resource name (projects/<num>/locations/<region>/tuningJobs/<id>)")
     args = p.parse_args()
 
     job = client.tunings.get(name=args.job_name)

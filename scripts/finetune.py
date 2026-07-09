@@ -1,13 +1,6 @@
-"""CLI orchestrator — same services as the MCP tool, shell-friendly.
-
-Usage:
-    python -m scripts.finetune                  # full pipeline (needs GCS_BUCKET)
-    python -m scripts.finetune --split-only     # JSONL files only, skip GCS/Vertex
-    python -m scripts.finetune --no-wait        # submit SFT and exit (don't block)
-"""
+"""CLI wrapper around the SFT pipeline — same services as the `fine_tune_truthfulness` MCP tool."""
 
 import argparse
-
 from mcp_server.utils import config
 from mcp_server.utils.dataset_processor import DatasetProcessor
 from mcp_server.utils.tuning_manager import TuningManager

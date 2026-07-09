@@ -63,6 +63,9 @@ resource "null_resource" "enable_pga_on_default_subnet" {
 resource "null_resource" "deploy_all" {
   triggers = {
     deploy_trigger = var.deploy_trigger
+    # Recreate on bucket recreation — "delete bucket + terraform apply" becomes
+    # a self-healing fresh bootstrap without needing -replace=null_resource.deploy_all.
+    bucket_id = google_storage_bucket.uploads.id
   }
 
   provisioner "local-exec" {
