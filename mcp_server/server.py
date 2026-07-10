@@ -11,7 +11,7 @@ from starlette.applications import Starlette
 from starlette.routing import Mount
 from .tools.check_finetune_status import check_finetune_status_tool
 from .tools.explain import explain_truthfulness_from_gcs_tool, explain_truthfulness_tool
-from .tools.finetune import fine_tune_truthfulness_tool
+from .tools.finetune import fine_tune_truthfulness_from_gcs_tool, fine_tune_truthfulness_tool
 from .tools.predict import predict_truthfulness_from_gcs_tool, predict_truthfulness_tool
 
 
@@ -49,5 +49,6 @@ app = TruthfulnessMcpServer(tools=[
     explain_truthfulness_tool,
     explain_truthfulness_from_gcs_tool,
     fine_tune_truthfulness_tool,
+    fine_tune_truthfulness_from_gcs_tool,
     check_finetune_status_tool,
 ]).build_app()

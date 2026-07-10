@@ -29,14 +29,16 @@ _httpx_client = (
 fine_tuned_remote_agent = RemoteA2aAgent(
     name="fine_tuned_predictor",
     description=(
-        "Two capabilities: (1) classifies political statements as truthful "
+        "Three capabilities: (1) classifies political statements as truthful "
         "(True) or untruthful (False) using a fine-tuned Gemini model — send "
         "a batch of statement dicts, receive a list of booleans in the same "
         "order; if ground-truth labels are supplied alongside the statements, "
         "also returns headline classification metrics (accuracy, precision, "
-        "recall, f1, confusion matrix); (2) reports on the underlying "
-        "fine-tuning job — current state, whether the tuned endpoint is "
-        "ready, and can refresh which endpoint future predictions use."
+        "recall, f1, confusion matrix); (2) submits a new Vertex AI SFT job "
+        "on an uploaded CSV dataset (returns immediately with the job name; "
+        "training takes 30-90 min); (3) reports on the underlying fine-tuning "
+        "job — current state, whether the tuned endpoint is ready, and can "
+        "refresh which endpoint future predictions use."
     ),
     agent_card=_AGENT_CARD,
     httpx_client=_httpx_client,

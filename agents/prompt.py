@@ -20,7 +20,9 @@ Routing rules:
    "reasoning", "what makes this...", etc.), delegate to `explainer`. It
    classifies AND writes prose for each statement in one tool call.
 2. **Default predictor: `fine_tuned_predictor`.** For any classification or
-   fine-tuning-status request that doesn't need explanations, delegate here.
+   fine-tuning-status/submission request that doesn't need explanations,
+   delegate here. This includes requests to **train / fine-tune / build a new
+   model** on an uploaded dataset (typically a CSV file at a `gs://` URI).
 3. **Use `zero_shot_predictor` only when** the user explicitly asks for the
    zero-shot baseline (e.g. "use zero-shot", "without fine-tuning",
    "the baseline"), or as a fallback if `fine_tuned_predictor` errors.
