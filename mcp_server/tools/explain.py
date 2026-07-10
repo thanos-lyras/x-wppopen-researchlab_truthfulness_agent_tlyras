@@ -1,19 +1,9 @@
-"""`explain_truthfulness` MCP tool — predict + explain in one call.
-
-Composes `predict_truthfulness` to get the verdict (zero-shot or fine-tuned,
-chosen by `use_fine_tuned`), then asks an independent free-form model
-(`EXPLAINER_MODEL`, default `gemini-2.5-flash`) to articulate the factors
-driving each verdict. When `labels` are supplied, the response includes
-headline metrics on the underlying predictions.
-"""
+"""`explain_truthfulness` MCP tool — verdict from predict + free-form explanation from EXPLAINER_MODEL."""
 
 from __future__ import annotations
-
 import os
-
 from google.adk.tools.function_tool import FunctionTool
 from google.genai import types
-
 from schemas.models import (
     ExplainedPrediction,
     ExplainRequest,
@@ -22,12 +12,8 @@ from schemas.models import (
     PredictRequest,
 )
 from services.vertex_client import client
-
 from .predict import predict_truthfulness
 
-# `or` (not the default arg) so an explicitly empty value (e.g. EXPLAINER_MODEL=
-# in a misconfigured deploy) still falls back to the default instead of crashing
-# the genai client with "model is required".
 EXPLAINER_MODEL = os.environ.get("EXPLAINER_MODEL") or "gemini-2.5-flash"
 
 EXPLAINER_SYSTEM_INSTRUCTION = """You are a political fact-checking explainer.
@@ -54,7 +40,6 @@ _gen_config = types.GenerateContentConfig(
 
 
 def _explain_one(point: Point, prediction: bool) -> str:
-    """One free-form call per (statement, verdict) pair."""
     verdict = "True (truthful)" if prediction else "False (untruthful)"
     lines = [f"Statement: {point.statement}", f"Verdict: {verdict}"]
     for label, key in _METADATA_FIELDS:
@@ -70,15 +55,7 @@ def _explain_one(point: Point, prediction: bool) -> str:
 
 
 def explain_truthfulness(req: ExplainRequest) -> ExplainResponse:
-    """Classify each statement and explain the verdict.
-
-    See `schemas.models.ExplainRequest` / `ExplainResponse` for field-level docs.
-
-    Behavior summary:
-    - Verdicts come from `predict_truthfulness` (zero-shot or fine-tuned, by `req.use_fine_tuned`).
-    - Per-point explanations come from EXPLAINER_MODEL (independent, free-form).
-    - `req.labels` supplied → response includes a `metrics` block on the underlying predictions.
-    """
+    """Classify each statement and explain the verdict. See `schemas.models` for field docs."""
     pred = predict_truthfulness(
         PredictRequest(points=req.points, use_fine_tuned=req.use_fine_tuned, labels=req.labels)
     )
@@ -92,20 +69,13 @@ def explain_truthfulness(req: ExplainRequest) -> ExplainResponse:
 explain_truthfulness_tool = FunctionTool(explain_truthfulness)
 
 
-# ── GCS variant ──────────────────────────────────────────────────────────────
-
 def explain_truthfulness_from_gcs(uri: str, use_fine_tuned: bool | None = None) -> ExplainResponse:
-    """Same as explain_truthfulness, but takes a gs:// URI to a JSON ExplainRequest.
+    """Same as explain_truthfulness but reads the ExplainRequest JSON from a gs:// URI.
 
-    Downloads the file, validates as ExplainRequest, calls the regular explainer.
-    Use this when the caller (e.g. the orchestrator's /invoke REST handler)
-    has already uploaded the batch to GCS.
-
-    `use_fine_tuned` lets the caller override the predictor selection in the
-    file (True forces fine-tuned verdicts, False forces zero-shot). Default
-    `None` means "use whatever the file says".
+    `use_fine_tuned` overrides the value in the file — pass True/False to force,
+    or None to defer to the file (defaults to zero-shot).
     """
-    from services.gcs_service import GCSService  # local import: keeps services optional in test contexts
+    from services.gcs_service import GCSService
     data = GCSService().download_bytes(uri)
     req = ExplainRequest.model_validate_json(data)
     if use_fine_tuned is not None:

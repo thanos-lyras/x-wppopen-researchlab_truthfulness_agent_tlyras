@@ -1,12 +1,6 @@
-"""Package bootstrap.
-
-Runs before any agent module is imported. Pulls GCP project/location from
-gcloud Application Default Credentials so you don't have to hardcode them in
-`.env`. Anything already set in the environment (e.g. via `.env`) wins.
-"""
+"""GCP auth bootstrap. Pulls project from ADC so `.env` doesn't have to hardcode it. Env values win."""
 
 import os
-
 import google.auth
 
 _, _project_id = google.auth.default()

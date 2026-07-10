@@ -1,46 +1,17 @@
-"""Orchestrator Agent.
-
-Root ADK 2.0 agent. Entry point for verifying and explaining statements.
-Delegates to the zero-shot predictor, fine-tuned predictor, and explainer
-over A2A (via `RemoteA2aAgent`) — does NOT import the sub-agents' Python
-in-process. Requires all three A2A servers to be running:
-`make run-a2a NAME=zero_shot`, `make run-a2a NAME=fine_tuned`,
-`make run-a2a NAME=explainer` (or just `make dev`).
-
-Exposes:
-- `root_agent` — for `adk web agents`.
-- `a2a_app` — Starlette app from `to_a2a()`. Serves A2A JSON-RPC at `/`,
-  the agent card at `/.well-known/agent-card.json`, plus one REST route:
-    `POST /invoke` — multipart/form-data with two fields:
-        instruction: free-form text telling the orchestrator what to do
-                     ("predict on this", "explain these", "fine-tune…")
-        file:        the uploaded file (JSON batch, CSV, …)
-    The handler uploads the file to `gs://$GCS_BUCKET/uploads/<uuid>.<ext>`,
-    asks the orchestrator's LLM to process it (the LLM reads the instruction
-    and routes to the right sub-agent), and deletes the GCS object after.
-  Try it with curl:
-    curl -X POST http://localhost:8000/invoke \\
-      -F "instruction=please classify these statements" \\
-      -F "file=@data/sample_1.json"
-"""
+"""Orchestrator agent. Root ADK entry. Delegates to sub-agents over A2A and exposes a `POST /invoke` REST route."""
 
 from __future__ import annotations
-
 import os
 import uuid
-
 import httpx
 from google.adk.a2a.utils.agent_to_a2a import to_a2a
 from google.adk.agents import Agent
 from starlette.responses import JSONResponse
-
 from agents.explainer.client import explainer_remote_agent
 from agents.fine_tuned.client import fine_tuned_remote_agent
 from agents.zero_shot.client import zero_shot_remote_agent
 from services.gcs_service import GCSService
-
 from .prompt import ORCHESTRATOR_INSTRUCTION
-
 
 orchestrator_agent = Agent(
     name="truthfulness_orchestrator",
@@ -50,21 +21,15 @@ orchestrator_agent = Agent(
         "and returns a consolidated verdict per statement."
     ),
     instruction=ORCHESTRATOR_INSTRUCTION,
-    # `or` (not the dict default) so the fallback also kicks in when the env
-    # var is set-but-empty — e.g. when `.env` has `ORCHESTRATOR_MODEL=` or the
-    # Cloud Run deploy passes `KEY=$VAR` with VAR unset (shell expands to "").
     model=os.environ.get("ORCHESTRATOR_MODEL") or "gemini-2.5-flash",
     sub_agents=[fine_tuned_remote_agent, zero_shot_remote_agent, explainer_remote_agent],
 )
 
 root_agent = orchestrator_agent
 
-# `to_a2a()`'s host/port/protocol go into the published agent card — that's the
-# URL remote callers will POST to. It is NOT the uvicorn listen address (Cloud
-# Run sets that via $PORT). For local dev the defaults work; in Cloud Run the
-# deploy injects ORCHESTRATOR_A2A_PUBLIC_HOST / ORCHESTRATOR_A2A_PROTOCOL /
-# ORCHESTRATOR_A2A_PUBLIC_PORT so the card advertises the public HTTPS URL
-# instead of `http://0.0.0.0:8000`.
+# `to_a2a()` host/port/protocol go into the published agent card, NOT the uvicorn
+# listen address. Cloud Run deploy injects *_PUBLIC_* so the card advertises the
+# public HTTPS URL instead of `http://0.0.0.0:<port>`.
 a2a_app = to_a2a(
     orchestrator_agent,
     host=os.environ.get("ORCHESTRATOR_A2A_PUBLIC_HOST", "0.0.0.0"),
@@ -76,12 +41,9 @@ a2a_app = to_a2a(
 )
 
 
-# ── POST /invoke ────────────────────────────────────────────────────────────
-# Multipart: instruction (str) + file (uploaded bytes). Upload the file to
-# GCS, paste the URI into a natural-language A2A message, self-call our own
-# A2A endpoint. The orchestrator LLM reads the instruction + URI and routes
-# to whichever sub-agent fits — no hardcoded task field, fully agentic.
-
+# POST /invoke: multipart (instruction + file). Uploads file to GCS, self-calls
+# the A2A endpoint with the URI in the prompt so the orchestrator LLM routes to
+# whichever sub-agent fits, then deletes the GCS object.
 async def _invoke(request):
     try:
         form = await request.form()

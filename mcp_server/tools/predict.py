@@ -1,36 +1,15 @@
-"""`predict_truthfulness` MCP tool — unified zero-shot + fine-tuned predictor.
-
-The `use_fine_tuned` flag picks the inference path:
-- **False (default)**: zero-shot via `ZERO_SHOT_MODEL` (default `gemini-2.5-flash`)
-  with the full-metadata prompt (statement + optional speaker / subjects /
-  context fields).
-- **True**: routes through the deployed tuned endpoint named in the
-  `FINE_TUNED_MODEL` env var, with a statement-only prompt to match the v1 SFT
-  training format. Falls back to `FINE_TUNED_BASE_MODEL` with a printed warning
-  when `FINE_TUNED_MODEL` is unset, so the wiring stays smoke-testable before
-  any SFT job has produced a tuned model.
-
-When `labels` is provided, the response includes headline classification
-metrics (accuracy / precision / recall / f1 / confusion matrix) treating True
-as the positive class.
-"""
+"""`predict_truthfulness` MCP tool — unified zero-shot + fine-tuned predictor."""
 
 from __future__ import annotations
-
 import os
-
 from google.adk.tools.function_tool import FunctionTool
 from google.genai import types
-
 from schemas.models import BinaryPrediction, Metrics, Point, PredictRequest, PredictResponse
 from services.vertex_client import client
-
 from ..utils import config
 from ..utils.metrics import compute_metrics
 
-# ── Zero-shot config ─────────────────────────────────────────────────────────
-# `or` (not the default arg) so an explicitly empty value still falls back to the
-# default instead of crashing the genai client with "model is required".
+# ── Zero-shot config ────────────────────────────────────────────────────
 _ZERO_SHOT_MODEL = os.environ.get("ZERO_SHOT_MODEL") or "gemini-2.5-flash"
 
 _ZERO_SHOT_SYSTEM_INSTRUCTION = """You are an expert political fact-checker.
@@ -64,18 +43,16 @@ _zero_shot_gen_config = types.GenerateContentConfig(
     response_schema=BinaryPrediction,
 )
 
-# ── Fine-tuned config ────────────────────────────────────────────────────────
-# Uses the same system instruction that was baked into the SFT training records
-# so train-time and serve-time prompts match (otherwise the tuned model degrades).
+# ── Fine-tuned config ───────────────────────────────────────────────────
+# Uses the SFT training-time system prompt — train/serve prompts must match
+# or the tuned model degrades.
 _fine_tuned_gen_config = types.GenerateContentConfig(
     system_instruction=config.SYSTEM_INSTRUCTION,
     temperature=0.0,
 )
 
 
-# ── Zero-shot helpers ────────────────────────────────────────────────────────
 def _format_zero_shot_prompt(point: Point) -> str:
-    """Multiline prompt: statement first, then any optional metadata fields present."""
     lines = [f"Statement: {point.statement}"]
     for label, key in _METADATA_FIELDS:
         value = getattr(point, key)
@@ -90,16 +67,12 @@ def _predict_zero_shot(point: Point) -> bool:
         contents=_format_zero_shot_prompt(point),
         config=_zero_shot_gen_config,
     )
-    # Structured output: Gemini returns JSON conforming to BinaryPrediction
-    # ({"verdict": true|false}). Pydantic parses and validates — no substring matching.
     return BinaryPrediction.model_validate_json(response.text).verdict
 
 
-# ── Fine-tuned helpers ───────────────────────────────────────────────────────
 def _resolve_fine_tuned_model() -> str:
-    """Pick the tuned endpoint at call time; fall back to BASE_MODEL with a warning."""
-    # Read os.environ on every call (not config.FINE_TUNED_MODEL which freezes at
-    # module import) so check_finetune_status updates take effect without an MCP restart.
+    # Read os.environ at call time (not config.FINE_TUNED_MODEL which freezes at import)
+    # so check_finetune_status updates take effect without an MCP restart.
     model = os.environ.get("FINE_TUNED_MODEL")
     if model:
         return model
@@ -111,8 +84,8 @@ def _resolve_fine_tuned_model() -> str:
 
 
 def _predict_fine_tuned(point: Point, model: str) -> bool:
-    # Statement-only — matches the v1 SFT training format. Metadata fields on `point`
-    # are intentionally ignored to keep train/serve prompts identical.
+    # Statement-only — matches the v1 SFT training format. Metadata fields are
+    # intentionally ignored to keep train/serve prompts identical.
     response = client.models.generate_content(
         model=model,
         contents=point.statement,
@@ -121,18 +94,8 @@ def _predict_fine_tuned(point: Point, model: str) -> bool:
     return response.text.strip().lower().startswith("true")
 
 
-# ── Public entry ─────────────────────────────────────────────────────────────
 def predict_truthfulness(req: PredictRequest) -> PredictResponse:
-    """Classify a batch of statements as truthful (True) or untruthful (False).
-
-    See `schemas.models.PredictRequest` / `PredictResponse` for field-level docs.
-
-    Behavior summary:
-    - `req.use_fine_tuned=False` → zero-shot via ZERO_SHOT_MODEL with metadata-enriched prompt.
-    - `req.use_fine_tuned=True`  → tuned endpoint (FINE_TUNED_MODEL) with statement-only
-      prompt; falls back to FINE_TUNED_BASE_MODEL with a warning if unset.
-    - `req.labels` supplied → response includes a `metrics` block (treating True as positive).
-    """
+    """Classify a batch as truthful (True) or untruthful (False). See `schemas.models` for field docs."""
     if req.use_fine_tuned:
         model = _resolve_fine_tuned_model()
         predictions = [_predict_fine_tuned(p, model) for p in req.points]
@@ -150,26 +113,13 @@ def predict_truthfulness(req: PredictRequest) -> PredictResponse:
 predict_truthfulness_tool = FunctionTool(predict_truthfulness)
 
 
-# ── GCS variant ──────────────────────────────────────────────────────────────
-# Reads a JSON PredictRequest from `gs://<bucket>/<path>` and runs the regular
-# predict path. Lets the orchestrator stage large/binary batches in GCS and
-# pass only the URI through A2A — keeps message bodies small and gives every
-# upload a stable, inspectable location.
-
 def predict_truthfulness_from_gcs(uri: str, use_fine_tuned: bool | None = None) -> PredictResponse:
-    """Same as predict_truthfulness, but takes a gs:// URI to a JSON PredictRequest.
+    """Same as predict_truthfulness but reads the PredictRequest JSON from a gs:// URI.
 
-    Downloads the file, validates as PredictRequest, calls the regular predictor.
-    Use this when the caller (e.g. the orchestrator's /invoke REST handler)
-    has already uploaded the batch to GCS.
-
-    `use_fine_tuned` lets the caller override the value in the file — pass True
-    to force the fine-tuned endpoint, False to force zero-shot. Default `None`
-    means "use whatever the file says" (which itself defaults to zero-shot).
-    Lets the fine-tuned sub-agent's LLM force its own routing regardless of
-    what was in the uploaded JSON.
+    `use_fine_tuned` overrides the value in the file — pass True/False to force,
+    or None to defer to the file (defaults to zero-shot).
     """
-    from services.gcs_service import GCSService  # local import: keeps services optional in test contexts
+    from services.gcs_service import GCSService
     data = GCSService().download_bytes(uri)
     req = PredictRequest.model_validate_json(data)
     if use_fine_tuned is not None:

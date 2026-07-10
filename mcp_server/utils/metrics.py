@@ -1,11 +1,6 @@
-"""Binary classification metrics for the truthfulness predictors.
-
-Pure-function helper called by `predict_truthfulness` (both zero-shot and
-fine-tuned paths). True is the positive class.
-"""
+"""Binary classification metrics — True is the positive class."""
 
 from __future__ import annotations
-
 from sklearn.metrics import (
     accuracy_score,
     confusion_matrix,
@@ -14,20 +9,7 @@ from sklearn.metrics import (
 
 
 def compute_metrics(predictions: list[bool], labels: list[bool]) -> dict:
-    """Compare predictions to ground-truth labels and return headline scores.
-
-    Args:
-        predictions: Model outputs (True = truthful, False = untruthful).
-        labels: Ground-truth labels in the same order.
-
-    Returns:
-        Dict with `accuracy`, `precision`, `recall`, `f1`, `support`, and a
-        `confusion_matrix` sub-dict with `tp`, `fn`, `fp`, `tn`. Precision /
-        recall / f1 treat True as the positive class.
-
-    Raises:
-        ValueError: predictions and labels differ in length.
-    """
+    """Return accuracy / precision / recall / f1 / support / confusion_matrix{tp,fn,fp,tn}."""
     if len(predictions) != len(labels):
         raise ValueError(
             f"length mismatch: predictions={len(predictions)}, labels={len(labels)}"
