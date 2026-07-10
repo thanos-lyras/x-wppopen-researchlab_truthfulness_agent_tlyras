@@ -11,6 +11,7 @@ RUN uv sync --frozen --no-install-project
 
 COPY agents/__init__.py ./agents/__init__.py
 COPY agents/fine_tuned/ ./agents/fine_tuned/
+COPY services/ ./services/
 
 RUN uv sync --frozen
 

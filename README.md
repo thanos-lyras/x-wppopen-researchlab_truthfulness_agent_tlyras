@@ -9,11 +9,12 @@ An orchestrator routes each request to one of three specialist sub-agents — ze
 - **Multi-agent orchestration** — an orchestrator LLM reads the caller's instruction and routes to one of three specialists over A2A (no in-process imports).
 - **Two predictor paths** — zero-shot Gemini (baseline) and fine-tuned Gemini (Vertex SFT-trained on the project's data split). Selected by the `use_fine_tuned` flag or by routing rule.
 - **Predict + explain in one call** — the explainer sub-agent returns both the verdict and a 2-3 sentence natural-language justification per point.
-- **Batch metrics on request** — pass ground-truth `labels` alongside the statements and the response includes accuracy, precision, recall, f1, and a confusion matrix (True as the positive class).
+- **Metrics on request** — pass ground-truth `labels` alongside the statements and the response includes accuracy, precision, recall, f1, and a confusion matrix (True as the positive class).
 - **Fine-tuning pipeline** — one MCP tool (`fine_tune_truthfulness`) handles stratified 80/10/10 split → GCS staging → Vertex SFT job submission. A companion tool (`check_finetune_status`) polls the job and self-heals `FINE_TUNED_MODEL` when the endpoint is ready.
 - **File-upload entrypoint** — the orchestrator exposes `POST /invoke` (multipart: `instruction` + `file`) that uploads to GCS, self-invokes the A2A endpoint with the URI, and cleans up after. Larger-than-context batches move over GCS instead of the LLM message body.
 - **Terraform + Python deploy** — one `terraform apply` provisions the bucket + Artifact Registry + VPC PGA + all 5 Cloud Run services + gateway registration end-to-end.
 - **Defense-in-depth network posture** — MCP + 3 sub-agents run with `--ingress=internal`; orchestrator is IAM-locked (`--no-allow-unauthenticated`) with only the A2A Gateway service account granted invoker. All outbound traffic routes through the default VPC via `--vpc-egress=all-traffic`.
+- **Per-hop OIDC auth** — every service-to-service call (orchestrator → sub-agent, sub-agent → MCP) mints a Google-signed ID token for the target's URL and attaches it as `Authorization: Bearer <token>`. Cloud Run's IAM edge validates each hop's compute-SA identity. Removes the dependency on `allUsers → run.invoker` bindings, which some GCP orgs block via `iam.allowedPolicyMemberDomains`.
 
 ## 🛠 Prerequisites
 
@@ -43,11 +44,11 @@ make dev
 
 Access the ADK web UI at `http://localhost:8080` and paste JSON batches into the chat. For finer control:
 
-| Command | What it does |
-|---|---|
-| `make run-mcp` | MCP tool server only (port 8004, `/mcp` endpoint) |
+| Command                       | What it does                                                                                            |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `make run-mcp`              | MCP tool server only (port 8004,`/mcp` endpoint)                                                      |
 | `make run-a2a NAME=<agent>` | Expose one agent as A2A (`<agent>` ∈ `zero_shot`, `fine_tuned`, `explainer`, `orchestrator`) |
-| `make run-web` | Browser playground only |
+| `make run-web`              | Browser playground only                                                                                 |
 
 Sample JSON batches under `data/sample_{1,2,3,10}.json` are ready to paste into the UI.
 
@@ -79,7 +80,20 @@ make smoke-orchestrator-gateway   # 3× 200 across health, agent card, JSON-RPC 
 make ask PROMPT="please classify and explain each statement" FILE=data/sample_1.json
 ```
 
-**⚠️ Important IAM requirement:** the sub-agents deploy with `--allow-unauthenticated` which requires setting an `allUsers → roles/run.invoker` binding on each service. Some GCP orgs block this via the `iam.allowedPolicyMemberDomains` policy — in that case, an admin must grant the binding manually (or add your project to the org policy exception list). Without it, orchestrator → sub-agent calls silently 401 and `make ask` returns an empty response.
+### 🔒 How service-to-service auth works
+
+Every hop between services (orchestrator → sub-agent, sub-agent → MCP) is IAM-checked and signed. There are no `allUsers` bindings anywhere — deliberately, because org policy `iam.allowedPolicyMemberDomains` typically blocks them in enterprise GCP orgs.
+
+The pattern for each hop:
+
+1. Caller (a Cloud Run service) mints a **Google-signed OIDC ID token** bound to the target service's base URL, using its own compute service account credentials from the metadata server. Handled by [`services/gcp_auth.py`](services/gcp_auth.py) — `IdTokenAuth` (httpx auth flow) for the `RemoteA2aAgent` clients, and a `header_provider` callback for the `McpToolset` connections.
+2. The token rides on the request as `Authorization: Bearer <token>`.
+3. Cloud Run's IAM edge on the target service validates the token, extracts the caller's SA identity, and checks whether that SA has `roles/run.invoker` on the target.
+4. `terraform apply` grants the runtime compute SA (`<projnum>-compute@developer.gserviceaccount.com`) `roles/run.invoker` on MCP + the 3 sub-agents automatically. No manual IAM setup needed.
+
+**Local dev is untouched** — [`services/gcp_auth.py`](services/gcp_auth.py) has an `is_cloud_run_url()` guard that skips token minting for `localhost` URLs, so `make dev` works over plain HTTP without ADC gymnastics.
+
+**What this replaced.** The original design ran sub-agents with `--allow-unauthenticated` (network-only auth via `--ingress=internal` + VPC egress) — simpler code, but relies on the org allowing `allUsers` bindings. When our org's `iam.allowedPolicyMemberDomains` policy blocked those bindings on fresh service creation, we moved to per-hop OIDC. Same defense-in-depth (ingress-internal + VPC egress still applies), plus per-hop identity claims in Cloud Run logs, minus the dependency on an admin-granted policy exception.
 
 ## 📂 Project Structure
 
