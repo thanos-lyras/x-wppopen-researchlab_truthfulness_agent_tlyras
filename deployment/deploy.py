@@ -552,8 +552,59 @@ def smoke_gateway() -> None:
     """End-to-end smoke via the gateway. Requires the four A2A_GATEWAY_* vars in .env."""
     _run_stream([
         "uv", "run", "--env-file", str(ENV_FILE),
-        "python", "deployment/gateway/smoke_orchestrator.py",
+        "python", "tests/smoke_orchestrator.py",
     ])
+
+
+def _latest_succeeded_tuning_job() -> tuple[str, str] | None:
+    """Query Vertex for the most recent SUCCEEDED tuning job with a deployed endpoint.
+
+    Returns (job_name, endpoint) or None if no succeeded jobs found.
+    """
+    from services.vertex_client import client
+    succeeded = [
+        j for j in client.tunings.list()
+        if j.state.name == "JOB_STATE_SUCCEEDED"
+        and j.tuned_model and j.tuned_model.endpoint
+    ]
+    if not succeeded:
+        return None
+    latest = max(succeeded, key=lambda j: j.create_time)
+    return latest.name, latest.tuned_model.endpoint
+
+
+def sync_tuned_endpoint() -> None:
+    """Push FINE_TUNED_MODEL + LAST_TUNING_JOB into MCP's Cloud Run env vars — no rebuild.
+
+    Reads values from .env. If either is missing, auto-discovers the most recent
+    SUCCEEDED tuning job from Vertex and writes both back to .env for next time.
+    Skips the ~2min Cloud Build step (~30-60s total vs full `deploy.py mcp`).
+    """
+    env = _env()
+    project, location = env["GOOGLE_CLOUD_PROJECT"], env["GOOGLE_CLOUD_LOCATION"]
+    endpoint = env.get("FINE_TUNED_MODEL", "")
+    job = env.get("LAST_TUNING_JOB", "")
+
+    if not endpoint or not job:
+        print("▶ .env missing FINE_TUNED_MODEL or LAST_TUNING_JOB — querying Vertex for latest SUCCEEDED job...")
+        discovered = _latest_succeeded_tuning_job()
+        if not discovered:
+            raise SystemExit(
+                "❌ No SUCCEEDED tuning jobs found in Vertex and nothing in .env — nothing to sync."
+            )
+        job, endpoint = discovered
+        print(f"✅ Discovered latest: {job}")
+        _write_env("LAST_TUNING_JOB", job)
+        _write_env("FINE_TUNED_MODEL", endpoint)
+
+    print(f"▶ Updating truthfulness-mcp env: FINE_TUNED_MODEL={endpoint} + LAST_TUNING_JOB={job}")
+    _run_stream([
+        "gcloud", "run", "services", "update", "truthfulness-mcp",
+        f"--region={location}",
+        f"--project={project}",
+        f"--update-env-vars=FINE_TUNED_MODEL={endpoint},LAST_TUNING_JOB={job}",
+    ])
+    print("✅ MCP env updated. Cold-started containers will now use the tuned endpoint.")
 
 
 # ── CLI ────────────────────────────────────────────────────────────────
@@ -568,12 +619,15 @@ DISPATCH = {
     "update-gateway-config": update_gateway_config,
     "smoke-gateway":         smoke_gateway,
     "rotate-gateway-token":  rotate_gateway_token,
+    "sync-tuned-endpoint":   sync_tuned_endpoint,
 }
 
-# Commands that don't need the bucket-bootstrap preflight. All except
-# register-gateway (which IS part of `all`) also skip the deploy-loop framing.
+# One-shot commands that don't need the bucket-bootstrap preflight and don't
+# participate in the deploy loop. All except register-gateway (which IS part of
+# `all`) also skip the deploy-loop framing entirely.
 GATEWAY_COMMANDS = {
     "register-gateway", "update-gateway-config", "smoke-gateway", "rotate-gateway-token",
+    "sync-tuned-endpoint",
 }
 
 
