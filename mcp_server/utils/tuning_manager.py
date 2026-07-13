@@ -1,5 +1,6 @@
 """Vertex Gemini SFT: submit job → poll to terminal → write deployed endpoint to `.env`."""
 
+import os
 import time
 from dotenv import set_key
 from google.genai import types
@@ -28,7 +29,10 @@ class TuningManager:
         )
         print(f"job submitted: {job.name}")
         # Persist so check_finetune_status can poll it later without re-typing.
+        # Write to BOTH: .env for future process boots (CLI/local); os.environ
+        # for same-process reads (in-MCP submit → in-MCP check_finetune_status).
         set_key(".env", "LAST_TUNING_JOB", job.name, quote_mode="never")
+        os.environ["LAST_TUNING_JOB"] = job.name
         return job
 
     def wait(self, job, poll_interval: int = 5 * 60):
@@ -44,4 +48,6 @@ class TuningManager:
         if job.tuned_model and job.tuned_model.endpoint:
             print(f"\n✅ tuned endpoint: {job.tuned_model.endpoint}")
             set_key(".env", "FINE_TUNED_MODEL", job.tuned_model.endpoint, quote_mode="never")
+            # Live-update so predict picks up the endpoint without an MCP restart.
+            os.environ["FINE_TUNED_MODEL"] = job.tuned_model.endpoint
         return job

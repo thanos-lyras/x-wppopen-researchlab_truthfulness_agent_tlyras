@@ -10,12 +10,14 @@ from .tools import tools
 fine_tuned_agent = Agent(
     name="fine_tuned_predictor",
     description=(
-        "Fine-tuned LLM predictor. Two capabilities: (1) classifies political "
+        "Fine-tuned LLM predictor. Three capabilities: (1) classifies political "
         "statements as True or False using a Gemini model fine-tuned on the "
         "project's training split, processing batches in a single tool call — "
         "and if the caller supplies ground-truth labels alongside the "
         "statements, also returns headline classification metrics (accuracy, "
-        "precision, recall, f1, confusion matrix); (2) reports on the "
+        "precision, recall, f1, confusion matrix); (2) submits a new Vertex AI "
+        "SFT job on an uploaded CSV dataset (returns immediately with the job "
+        "name; training runs 30-90 min server-side); (3) reports on the "
         "underlying fine-tuning job — current state, whether the tuned "
         "endpoint is ready, and can refresh which endpoint future predictions "
         "use."

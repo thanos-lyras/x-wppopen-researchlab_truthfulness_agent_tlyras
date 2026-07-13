@@ -74,10 +74,74 @@ Under the hood, Terraform declaratively provisions the shared infra, then trigge
 make smoke-orchestrator-gateway   # 3× 200 across health, agent card, JSON-RPC verdict
 ```
 
-**Invoke the deployed system:**
+### 🎯 What the deployed system can do
 
+`make ask` — natural-language `PROMPT` steers the orchestrator's routing. `FILE=<path>` uploads locally to GCS. `URI=gs://...` reuses an existing GCS file. `AGENT=<name>` forces a specific sub-agent, bypassing LLM routing.
+
+Classify (fine-tuned by default):
+```bash
+make ask PROMPT="please classify these statements" FILE=data/sample_1.json
+```
+
+Classify + explain:
 ```bash
 make ask PROMPT="please classify and explain each statement" FILE=data/sample_1.json
+```
+
+Zero-shot baseline:
+```bash
+make ask PROMPT="use the zero-shot baseline to classify these" FILE=data/sample_2.json
+```
+
+Force a sub-agent:
+```bash
+make ask PROMPT="please classify" FILE=data/sample_3.json AGENT=fine_tuned
+make ask PROMPT="please classify" FILE=data/sample_3.json AGENT=zero_shot
+```
+
+Reuse an existing GCS file:
+```bash
+make ask PROMPT="please classify" URI=gs://$GCS_BUCKET/uploads/mine.json
+```
+
+Submit a Vertex SFT fine-tuning job (~$5-15, 30-90 min server-side):
+```bash
+make ask PROMPT="please fine-tune the model on this dataset" FILE=data/data.csv
+```
+
+Check fine-tuning status:
+```bash
+make ask PROMPT="check the fine-tuning status"
+```
+
+Metrics (accuracy / precision / recall / f1 / confusion matrix — requires `labels` in the file):
+```bash
+make ask PROMPT="classify and report metrics" FILE=data/sample_10.json
+```
+
+Full JSON envelope for debugging:
+```bash
+PYTHONPATH=. uv run --env-file .env python main.py \
+  --prompt "please classify" --file data/sample_1.json --raw | python3 -m json.tool
+```
+
+### 🔧 After a fine-tuning job completes — `make sync-tuned-endpoint`
+
+Fine-tuning writes the new endpoint into MCP's live process only. That works immediately but is lost on cold-start. `make sync-tuned-endpoint` persists it into Cloud Run's service config (~30s, no image rebuild):
+
+- Reads `FINE_TUNED_MODEL` + `LAST_TUNING_JOB` from `.env`.
+- If either is missing, queries Vertex for the most recent SUCCEEDED job and writes both back to `.env`.
+- Runs `gcloud run services update` to inject them as MCP container env vars.
+
+Without it, cold-started MCP containers fall back to `gemini-2.5-flash-lite` and predictions silently degrade.
+
+Full fine-tune workflow, zero manual copy-paste:
+```bash
+make ask PROMPT="please fine-tune the model" FILE=data/data.csv
+# ~30-90 min
+make ask PROMPT="check the fine-tuning status"
+make sync-tuned-endpoint
+make ask PROMPT="please classify" FILE=data/sample_1.json AGENT=fine_tuned
 ```
 
 ### 🔒 How service-to-service auth works

@@ -10,7 +10,7 @@ ENV_FILE := .env
         _run-a2a-zero-shot _run-a2a-fine-tuned _run-a2a-explainer \
         dev \
         tf-init tf-apply tf-destroy \
-        deploy-all \
+        deploy-all sync-tuned-endpoint \
         register-orchestrator-gateway smoke-orchestrator-gateway \
         ask \
         clean
@@ -33,6 +33,7 @@ help:
 	@echo "  tf-apply                             terraform apply — full bootstrap"
 	@echo "  tf-destroy                           terraform destroy"
 	@echo "  deploy-all                           bypass terraform: deploy 5 services + register-gateway"
+	@echo "  sync-tuned-endpoint                  push FINE_TUNED_MODEL from .env to deployed MCP (~60s, no rebuild)"
 	@echo ""
 	@echo "Gateway:"
 	@echo "  register-orchestrator-gateway        reuse or mint bearer, upload config, write .env"
@@ -86,10 +87,11 @@ dev:
 	@$(MAKE) -j 5 run-mcp _run-a2a-zero-shot _run-a2a-fine-tuned _run-a2a-explainer run-web
 
 # ── Deploy ─────────────────────────────────────────────────────────────
-tf-init:    ; cd terraform && terraform init
-tf-apply:   ; cd terraform && terraform apply
-tf-destroy: ; cd terraform && terraform destroy
-deploy-all: ; PYTHONPATH=. $(UV) run python deployment/deploy.py all
+tf-init:             ; cd terraform && terraform init
+tf-apply:            ; cd terraform && terraform apply
+tf-destroy:          ; cd terraform && terraform destroy
+deploy-all:          ; PYTHONPATH=. $(UV) run python deployment/deploy.py all
+sync-tuned-endpoint: ; PYTHONPATH=. $(UV) run --env-file $(ENV_FILE) python deployment/deploy.py sync-tuned-endpoint
 
 # ── Gateway ────────────────────────────────────────────────────────────
 register-orchestrator-gateway: ; PYTHONPATH=. $(UV) run python deployment/deploy.py register-gateway

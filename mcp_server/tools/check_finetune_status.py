@@ -6,18 +6,20 @@ from dotenv import set_key
 from google.adk.tools.function_tool import FunctionTool
 from schemas.models import JobStatusResponse, NoJobResponse
 from services.vertex_client import client
-from ..utils import config
 
 
 def check_finetune_status() -> NoJobResponse | JobStatusResponse:
     """Poll LAST_TUNING_JOB; on SUCCEEDED, write the deployed endpoint to FINE_TUNED_MODEL (.env + os.environ)."""
-    if not config.LAST_TUNING_JOB:
+    # Read live from os.environ (not config.LAST_TUNING_JOB which freezes at import)
+    # so a job submitted via fine_tune_truthfulness in the same process is visible.
+    job_name = os.environ.get("LAST_TUNING_JOB")
+    if not job_name:
         return NoJobResponse(
             status="no_job",
             message="no tuning job recorded — submit one first via fine_tune_truthfulness",
         )
 
-    job = client.tunings.get(name=config.LAST_TUNING_JOB)
+    job = client.tunings.get(name=job_name)
     state = job.state.name
 
     if state == "JOB_STATE_SUCCEEDED" and job.tuned_model and job.tuned_model.endpoint:
@@ -45,7 +47,7 @@ def check_finetune_status() -> NoJobResponse | JobStatusResponse:
         endpoint_updated = False
 
     return JobStatusResponse(
-        job_name=config.LAST_TUNING_JOB,
+        job_name=job_name,
         state=state,
         endpoint=endpoint,
         endpoint_updated=endpoint_updated,

@@ -24,7 +24,7 @@ def _auth_headers(_ctx):
 
 mcp_tools = McpToolset(
     connection_params=StreamableHTTPConnectionParams(url=_MCP_URL),
-    tool_filter=["predict_truthfulness_from_gcs", "check_finetune_status"],
+    tool_filter=["predict_truthfulness_from_gcs", "fine_tune_truthfulness_from_gcs", "check_finetune_status"],
     header_provider=_auth_headers,
 )
 
